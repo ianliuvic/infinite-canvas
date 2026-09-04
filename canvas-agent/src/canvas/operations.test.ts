@@ -25,3 +25,15 @@ test("generation flow still creates a prompt node for prose prompts", () => {
     const config = ops.find((op) => op.type === "add_node" && op.nodeType === "config");
     assert.match(String(config?.metadata?.prompt), /@\[node:text-/);
 });
+
+test("node creation without coordinates delegates placement to the visible canvas", () => {
+    const [node] = opsOf("canvas_create_node", { nodeType: "image", title: "Placeholder" });
+    assert.equal(node.autoPosition, true);
+    assert.equal(node.position, undefined);
+});
+
+test("explicit node coordinates remain unchanged", () => {
+    const [node] = opsOf("canvas_create_node", { nodeType: "image", x: 120, y: 240 });
+    assert.deepEqual(node.position, { x: 120, y: 240 });
+    assert.equal(node.autoPosition, undefined);
+});

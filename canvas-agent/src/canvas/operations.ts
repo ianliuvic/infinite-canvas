@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 
 import type { ToolName } from "./schemas.js";
-import { nextCanvasX } from "./tools.js";
 import type { CanvasNode, CanvasNodeType, CanvasSnapshot } from "./types.js";
 
 export type CanvasToolRequest = { name: "canvas_apply_ops"; input: Record<string, unknown> };
@@ -11,23 +10,31 @@ export function buildCanvasToolRequest(name: ToolName, input: Record<string, unk
     if (name === "canvas_apply_ops") return { name, input };
     if (name === "canvas_create_node") {
         const data = input as { nodeType: CanvasNodeType; title?: string; x?: number; y?: number; width?: number; height?: number; metadata?: Record<string, unknown> };
-        return applyOps([{ type: "add_node", nodeType: data.nodeType, title: data.title, position: { x: data.x ?? nextCanvasX(state), y: data.y ?? 0 }, width: data.width, height: data.height, metadata: data.metadata }]);
+        const explicit = data.x !== undefined || data.y !== undefined;
+        return applyOps([{ type: "add_node", nodeType: data.nodeType, title: data.title, ...(explicit ? { position: { x: data.x ?? 0, y: data.y ?? 0 } } : { autoPosition: true }), width: data.width, height: data.height, metadata: data.metadata }]);
     }
     if (name === "canvas_create_text_node") {
         const data = input as { text?: string; x?: number; y?: number; title?: string; width?: number; height?: number };
-        return applyOps([textNodeOp(data, data.x ?? nextCanvasX(state), data.y ?? 0)]);
+        return applyOps([textNodeOp(data, data.x, data.y)]);
     }
     if (name === "canvas_create_text_nodes") {
         const data = input as { items: Array<{ text: string; title?: string; x?: number; y?: number; width?: number; height?: number }>; x?: number; y?: number; gap?: number; direction?: "row" | "column" };
-        const x = Number(data.x ?? nextCanvasX(state));
+        const explicitBase = data.x !== undefined || data.y !== undefined;
+        const x = Number(data.x ?? 0);
         const y = Number(data.y ?? 0);
         const gap = Number(data.gap ?? 40);
-        return applyOps(data.items.map((item, index) => textNodeOp(item, item.x ?? (data.direction === "row" ? x + index * (340 + gap) : x), item.y ?? (data.direction === "row" ? y : y + index * (240 + gap)))));
+        return applyOps(data.items.map((item, index) => {
+            const explicitItem = item.x !== undefined || item.y !== undefined || explicitBase;
+            return explicitItem
+                ? textNodeOp(item, item.x ?? (data.direction === "row" ? x + index * (340 + gap) : x), item.y ?? (data.direction === "row" ? y : y + index * (240 + gap)))
+                : textNodeOp(item, undefined, undefined, data.direction === "row" ? { x: index * (340 + gap), y: 0 } : { x: 0, y: index * (240 + gap) });
+        }));
     }
     if (name === "canvas_create_image_prompt_flow") return applyOps(generationFlowOps({ ...input, mode: "image" }, state));
     if (name === "canvas_create_config_node") {
-        const x = Number(input.x ?? nextCanvasX(state));
-        const y = Number(input.y ?? 0);
+        const explicit = input.x !== undefined || input.y !== undefined;
+        const x = explicit ? Number(input.x ?? 0) : undefined;
+        const y = explicit ? Number(input.y ?? 0) : undefined;
         const configId = `config-${crypto.randomUUID()}`;
         const mode = generationMode(input.mode);
         const prompt = String(input.prompt || "");
@@ -82,12 +89,13 @@ function applyOps(ops: unknown[]): CanvasToolRequest {
 }
 
 /** 创建文本节点操作。 */
-function textNodeOp(input: { id?: string; text?: string; title?: string; width?: number; height?: number }, x: number, y: number) {
-    return { type: "add_node", id: input.id, nodeType: "text", title: input.title, position: { x, y }, width: input.width, height: input.height, metadata: { content: input.text || "", status: "success", fontSize: 14 } };
+function textNodeOp(input: { id?: string; text?: string; title?: string; width?: number; height?: number }, x?: number, y?: number, autoOffset?: { x: number; y: number }) {
+    const explicit = x !== undefined || y !== undefined;
+    return { type: "add_node", id: input.id, nodeType: "text", title: input.title, ...(explicit ? { position: { x: x ?? 0, y: y ?? 0 } } : { autoPosition: true, ...(autoOffset ? { autoOffset } : {}) }), width: input.width, height: input.height, metadata: { content: input.text || "", status: "success", fontSize: 14 } };
 }
 
 /** 创建生成配置节点操作。 */
-function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: number) {
+function configNodeOp(id: string, input: Record<string, unknown>, x?: number, y?: number, autoOffset?: { x: number; y: number }) {
     const mode = generationMode(input.mode);
     const prompt = String(input.prompt || "");
     return {
@@ -95,7 +103,7 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
         id,
         nodeType: "config",
         title: String(input.title || generationTitle(mode)),
-        position: { x, y },
+        ...(x !== undefined || y !== undefined ? { position: { x: x ?? 0, y: y ?? 0 } } : { autoPosition: true, ...(autoOffset ? { autoOffset } : {}) }),
         width: typeof input.width === "number" ? input.width : undefined,
         height: typeof input.height === "number" ? input.height : undefined,
         metadata: cleanRecord({
@@ -124,8 +132,9 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
 function generationFlowOps(input: Record<string, unknown>, state: CanvasSnapshot | null) {
     const mode = generationMode(input.mode);
     const prompt = String(input.prompt || "");
-    const x = Number(input.x ?? nextCanvasX(state));
-    const y = Number(input.y ?? 0);
+    const explicit = input.x !== undefined || input.y !== undefined;
+    const x = explicit ? Number(input.x ?? 0) : undefined;
+    const y = explicit ? Number(input.y ?? 0) : undefined;
     const textId = `text-${crypto.randomUUID()}`;
     const configId = `config-${crypto.randomUUID()}`;
     const referenceNodeIds = Array.isArray(input.referenceNodeIds) ? input.referenceNodeIds.filter((id): id is string => typeof id === "string") : [];
@@ -136,8 +145,8 @@ function generationFlowOps(input: Record<string, unknown>, state: CanvasSnapshot
         && prompt.replace(/@\[node:[\w-]+\]/g, "").trim() === "";
     const tokens = reuseReferences ? referenceNodeIds.map((id) => `@[node:${id}]`) : [`@[node:${textId}]`, ...referenceNodeIds.map((id) => `@[node:${id}]`)];
     return [
-        ...(reuseReferences ? [] : [textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y)]),
-        configNodeOp(configId, { ...input, prompt: tokens.join("\n") }, x + 420, y),
+        ...(reuseReferences ? [] : [textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y, { x: -210, y: 0 })]),
+        configNodeOp(configId, { ...input, prompt: tokens.join("\n") }, x === undefined ? undefined : x + 420, y, { x: reuseReferences ? 0 : 210, y: 0 }),
         ...(reuseReferences ? [] : [{ type: "connect_nodes", fromNodeId: textId, toNodeId: configId }]),
         ...referenceNodeIds.map((fromNodeId) => ({ type: "connect_nodes", fromNodeId, toNodeId: configId })),
         { type: "select_nodes", ids: [configId] },

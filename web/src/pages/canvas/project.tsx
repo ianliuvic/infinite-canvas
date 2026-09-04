@@ -773,6 +773,7 @@ function InfiniteCanvasPage() {
         connections,
         selectedNodeIds,
         viewport,
+        viewportSize: size,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
