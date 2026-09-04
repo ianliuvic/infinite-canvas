@@ -14,7 +14,7 @@ import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWo
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
-import { CrunHttpError, generateWithCrun, listCrunCanvasModels } from "./crun.js";
+import { CrunHttpError, describeCrunCanvasModel, generateWithCrun, listCrunCanvasModels } from "./crun.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -192,6 +192,14 @@ export function startHttpServer() {
     });
     app.get("/agent/codex/models", route(async (_req, res) => res.json({ ok: true, ...(await listCodexModels(emit)) })));
     app.get("/agent/crun/models", route(async (_req, res) => res.json({ ok: true, data: await listCrunCanvasModels() })));
+    app.get("/agent/crun/v1/schema", route(async (req, res) => {
+        try {
+            res.json(await describeCrunCanvasModel(String(req.query.model || "")));
+        } catch (error) {
+            if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
+            throw error;
+        }
+    }));
     app.post("/agent/crun/v1/generate", route(async (req, res) => {
         try {
             res.json(await generateWithCrun(req.body || {}));

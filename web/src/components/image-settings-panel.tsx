@@ -1,11 +1,11 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, readMediaDimensions } from "@/lib/media-size";
-import type { AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
     { value: "auto", labelKey: "auto" },
@@ -37,6 +37,14 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
+    const crunSettings = useCrunImageSettings(config);
+    const showQuality = !crunSettings || crunSettings.fields.has("quality");
+    const showDimensions = !crunSettings || crunSettings.fields.has("size") || (crunSettings.fields.has("width") && crunSettings.fields.has("height"));
+    const showResolution = !crunSettings || crunSettings.fields.has("resolution");
+    const showAspectRatio = !crunSettings || crunSettings.fields.has("aspectRatio");
+    const showBackground = !crunSettings || crunSettings.fields.has("background");
+    const scaleOptions = crunSettings?.resolutions.length ? mediaScaleOptions.filter((value) => crunSettings.resolutions.includes(value.toLowerCase())) : mediaScaleOptions;
+    const ratioOptions = crunSettings?.ratios.length ? mediaRatioOptions.filter((item) => crunSettings.ratios.includes(item.value.toLowerCase())) : mediaRatioOptions;
     const sizeOptions = { step: snapDimensionToStep ? DIMENSION_STEP : 1, minPixels: IMAGE_MIN_PIXELS };
     const selectedScale = inferMediaScale(activeSize);
     const selectedRatio = inferMediaRatio(activeSize);
@@ -63,7 +71,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 }}
             >
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.image.title")}</div> : null}
-                <div className="space-y-2.5">
+                {showQuality ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.quality")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {qualityOptions.map((item) => (
@@ -72,8 +80,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                     </div>
-                </div>
-                <div className="space-y-2.5">
+                </div> : null}
+                {showDimensions ? <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.size")}</SettingTitle>
                         <div className="flex items-center gap-2">
@@ -90,21 +98,21 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <span className="text-lg opacity-45">↔</span>
                         <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
                     </div>
-                </div>
-                <div className="space-y-2.5">
+                </div> : null}
+                {showResolution ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.resolution")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {mediaScaleOptions.map((value) => (
+                        {scaleOptions.map((value) => (
                             <OptionPill key={value} selected={selectedScale === value} theme={theme} onClick={() => selectScale(value)}>
                                 {value === "auto" ? t("settingsPanels.common.auto") : value}
                             </OptionPill>
                         ))}
                     </div>
-                </div>
-                <div className="space-y-2.5">
+                </div> : null}
+                {showAspectRatio ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.aspectRatio")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {mediaRatioOptions.map((item) => (
+                        {ratioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -118,8 +126,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </button>
                         ))}
                     </div>
-                </div>
-                <div className="flex items-center justify-between gap-3">
+                </div> : null}
+                {showBackground ? <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.transparent")}</SettingTitle>
                         <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
@@ -129,7 +137,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <span onMouseDown={(event) => event.stopPropagation()}>
                         <Switch size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
                     </span>
-                </div>
+                </div> : null}
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.count")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -144,6 +152,73 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
             </div>
         </ImageSettingsTheme>
     );
+}
+
+type CrunImageField = "quality" | "size" | "width" | "height" | "resolution" | "aspectRatio" | "background";
+type CrunImageSettings = {
+    fields: Set<CrunImageField>;
+    resolutions: string[];
+    ratios: string[];
+};
+
+function useCrunImageSettings(config: AiConfig) {
+    const selectedModel = config.model || config.imageModel;
+    const channel = resolveModelChannel(config, selectedModel);
+    const isCrun = channel.id === "crun";
+    const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
+    useEffect(() => {
+        setSchema(null);
+        if (!isCrun) return;
+        const controller = new AbortController();
+        const url = `${channel.baseUrl.replace(/\/+$/, "")}/v1/schema?model=${encodeURIComponent(modelOptionName(selectedModel))}`;
+        void fetch(url, { credentials: "include", signal: controller.signal })
+            .then(async (response) => {
+                const data = await response.json() as { schema?: Record<string, unknown>; error?: string };
+                if (!response.ok || !data.schema) throw new Error(data.error || "Failed to read Crun model schema");
+                setSchema(data.schema);
+            })
+            .catch((error) => {
+                if (error instanceof DOMException && error.name === "AbortError") return;
+                setSchema(null);
+            });
+        return () => controller.abort();
+    }, [channel.baseUrl, isCrun, selectedModel]);
+    return useMemo(() => isCrun && schema ? parseCrunImageSettings(schema) : null, [isCrun, schema]);
+}
+
+function parseCrunImageSettings(schema: Record<string, unknown>): CrunImageSettings {
+    const properties = schema.properties && typeof schema.properties === "object" ? schema.properties as Record<string, Record<string, unknown>> : {};
+    const fields = new Set<CrunImageField>();
+    if (findProperty(properties, ["quality"])) fields.add("quality");
+    if (findProperty(properties, ["size"])) fields.add("size");
+    if (findProperty(properties, ["width"])) fields.add("width");
+    if (findProperty(properties, ["height"])) fields.add("height");
+    const resolution = findProperty(properties, ["resolution", "image_size", "imageSize", "output_resolution"]);
+    if (resolution) fields.add("resolution");
+    const aspectRatio = findProperty(properties, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"]);
+    if (aspectRatio) fields.add("aspectRatio");
+    if (findProperty(properties, ["background", "background_mode", "transparent_background"])) fields.add("background");
+    return {
+        fields,
+        resolutions: schemaEnum(resolution).map((value) => value.toLowerCase()),
+        ratios: schemaEnum(aspectRatio).map((value) => value.toLowerCase()),
+    };
+}
+
+function findProperty(properties: Record<string, Record<string, unknown>>, names: string[]) {
+    return names.map((name) => properties[name]).find(Boolean);
+}
+
+function schemaEnum(definition: Record<string, unknown> | undefined): string[] {
+    if (!definition) return [];
+    if (Array.isArray(definition.enum)) return definition.enum.filter((value): value is string => typeof value === "string");
+    for (const key of ["oneOf", "anyOf"]) {
+        const choices = definition[key];
+        if (!Array.isArray(choices)) continue;
+        const values = choices.flatMap((choice) => choice && typeof choice === "object" ? schemaEnum(choice as Record<string, unknown>) : []);
+        if (values.length) return values;
+    }
+    return [];
 }
 
 export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; children: ReactNode }) {

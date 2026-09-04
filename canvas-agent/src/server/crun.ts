@@ -87,6 +87,15 @@ export async function generateWithCrun(body: CrunGenerateInput) {
     return { ok: true, task_id: taskId, status: "success", media_urls: mediaUrls, media_info: result.media_info || {} };
 }
 
+export async function describeCrunCanvasModel(model: string) {
+    const name = model.trim();
+    if (!name) throw new CrunHttpError(400, "Crun model is required");
+    const response = await crunRequest("GET", `/api/v1/client/job/Models/${modelPath(name)}`);
+    const schema = findInputSchema(response);
+    if (!schema) throw new CrunHttpError(502, "Crun did not return an input schema for this model");
+    return { ok: true, model: name, schema };
+}
+
 export class CrunHttpError extends Error {
     constructor(readonly status: number, message: string, readonly details?: unknown) {
         super(message);
@@ -187,10 +196,20 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
     setMedia(input, properties, accepts, ["audios", "audio_urls", "reference_audios"], ["audio", "audio_url", "input_audio", "reference_audio"], urls("audio"));
 
     const size = String(source.params.size || "");
-    const ratio = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(size) ? size : "";
-    const resolution = /^\d+k$/i.test(String(source.params.quality || "")) ? String(source.params.quality).toUpperCase() : String(source.params.resolution || "");
-    setFirst(input, accepts, ["aspect_ratio", "ratio"], ratio || undefined);
-    setFirst(input, accepts, ["resolution", "quality"], resolution || undefined);
+    const dimensions = parseDimensions(size);
+    const ratio = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(size) ? size : dimensions ? simplifyRatio(dimensions.width, dimensions.height) : "";
+    const quality = String(source.params.quality || "").toLowerCase();
+    const resolution = /^\d+k$/i.test(quality)
+        ? quality.toUpperCase()
+        : ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[quality] || String(source.params.resolution || "");
+    setFirst(input, accepts, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], enumCompatibleValue(properties, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], ratio));
+    setFirst(input, accepts, ["resolution", "image_size", "imageSize", "output_resolution"], enumCompatibleValue(properties, ["resolution", "image_size", "imageSize", "output_resolution"], resolution));
+    if (dimensions) {
+        setFirst(input, accepts, ["width"], dimensions.width);
+        setFirst(input, accepts, ["height"], dimensions.height);
+        setFirst(input, accepts, ["size"], `${dimensions.width}x${dimensions.height}`);
+    }
+    setFirst(input, accepts, ["quality"], quality === "auto" ? undefined : quality);
     setFirst(input, accepts, ["duration", "seconds"], source.params.seconds);
     setFirst(input, accepts, ["generate_audio", "with_audio"], source.params.generateAudio);
     setFirst(input, accepts, ["watermark", "add_watermark"], source.params.watermark);
@@ -216,6 +235,48 @@ function setMedia(target: Record<string, unknown>, properties: Record<string, Re
         const scalarName = scalarNames.find(accepts);
         if (scalarName) target[scalarName] = values[0];
     }
+}
+
+function parseDimensions(value: string) {
+    const match = /^(\d+)x(\d+)$/i.exec(value);
+    if (!match) return null;
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function simplifyRatio(width: number, height: number) {
+    const divisor = greatestCommonDivisor(width, height);
+    return `${width / divisor}:${height / divisor}`;
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+    let a = Math.abs(Math.round(left));
+    let b = Math.abs(Math.round(right));
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
+}
+
+function enumCompatibleValue(properties: Record<string, Record<string, unknown>>, names: string[], value: string) {
+    if (!value) return undefined;
+    const definition = names.map((name) => properties[name]).find(Boolean);
+    const values = Array.isArray(definition?.enum) ? definition.enum.filter((item): item is string => typeof item === "string") : [];
+    if (!values.length) return value;
+    const exact = values.find((item) => item.toLowerCase() === value.toLowerCase());
+    if (exact) return exact;
+    if (/^\d+:\d+$/.test(value)) {
+        const [width, height] = value.split(":").map(Number);
+        const target = width / height;
+        return values.filter((item) => /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(item)).reduce<string | undefined>((best, item) => {
+            if (!best) return item;
+            const score = (candidate: string) => {
+                const [w, h] = candidate.split(":").map(Number);
+                return Math.abs(w / h - target);
+            };
+            return score(item) < score(best) ? item : best;
+        }, undefined);
+    }
+    return undefined;
 }
 
 function modelPath(model: string) {
