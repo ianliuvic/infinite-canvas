@@ -3,7 +3,7 @@ import i18n from "@/i18n";
 
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { CANVAS_AGENT_URL } from "@/constant/runtime-config";
+import { CANVAS_AGENT_MANAGED, CANVAS_AGENT_URL } from "@/constant/runtime-config";
 
 export type AgentChatRole = "user" | "assistant" | "system" | "tool" | "error";
 export type AgentAttachment = { id: string; name: string; type: string; size: number; width: number; height: number; url: string; dataUrl: string };
@@ -103,7 +103,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     panelClosing: false,
     canvasContext: null,
     url: typeof window === "undefined" ? CANVAS_AGENT_URL : localStorage.getItem("canvas-agent-url") || CANVAS_AGENT_URL,
-    token: typeof window === "undefined" ? "" : sessionStorage.getItem("canvas-agent-token") || "",
+    token: typeof window === "undefined" ? "" : sessionStorage.getItem("canvas-agent-token") || (CANVAS_AGENT_MANAGED ? "managed" : ""),
     connected: false,
     enabled: false,
     silentConnect: false,

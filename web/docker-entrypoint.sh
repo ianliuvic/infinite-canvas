@@ -14,11 +14,18 @@ sanitize_id() {
 GA4_ID=$(sanitize_id "${ANALYTICS_GA4_ID:-}")
 BAIDU_ID=$(sanitize_id "${ANALYTICS_BAIDU_ID:-}")
 CANVAS_AGENT_URL=$(printf '%s' "${CANVAS_AGENT_URL:-}" | tr -cd 'A-Za-z0-9:/._-')
+CANVAS_AGENT_MANAGED=$(printf '%s' "${CANVAS_AGENT_MANAGED:-}" | tr '[:upper:]' '[:lower:]')
+if [ "$CANVAS_AGENT_MANAGED" = "true" ] || [ "$CANVAS_AGENT_MANAGED" = "1" ]; then
+    CANVAS_AGENT_MANAGED=true
+else
+    CANVAS_AGENT_MANAGED=false
+fi
 
 cat > /usr/share/nginx/html/config.js <<EOF
 window.__RUNTIME_CONFIG__ = {
   ANALYTICS_GA4_ID: "${GA4_ID}",
   ANALYTICS_BAIDU_ID: "${BAIDU_ID}",
-  CANVAS_AGENT_URL: "${CANVAS_AGENT_URL}"
+  CANVAS_AGENT_URL: "${CANVAS_AGENT_URL}",
+  CANVAS_AGENT_MANAGED: ${CANVAS_AGENT_MANAGED}
 };
 EOF
