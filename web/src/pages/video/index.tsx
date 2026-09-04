@@ -60,7 +60,7 @@ type GenerationLog = {
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoProviderMode">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoProviderMode" | "videoProviderParams">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -366,6 +366,7 @@ export default function VideoPage() {
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
         if (log.config.videoProviderMode) updateConfig("videoProviderMode", log.config.videoProviderMode);
+        if (log.config.videoProviderParams) updateConfig("videoProviderParams", log.config.videoProviderParams);
         setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
     };
 
@@ -737,6 +738,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         videoWatermark: log.config?.videoWatermark || "false",
         videoMode: log.config?.videoMode === "reference" ? "reference" : "frames",
         videoProviderMode: log.config?.videoProviderMode || "",
+        videoProviderParams: log.config?.videoProviderParams || "{}",
     };
 }
 
@@ -751,6 +753,7 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
         videoWatermark: config.videoWatermark,
         videoMode: config.videoMode === "reference" ? "reference" : "frames",
         videoProviderMode: config.videoProviderMode || "",
+        videoProviderParams: config.videoProviderParams || "{}",
     };
     return {
         id: nanoid(),

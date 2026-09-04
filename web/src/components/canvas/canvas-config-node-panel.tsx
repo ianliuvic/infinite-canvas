@@ -161,6 +161,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoMode: node.metadata?.videoMode || globalConfig.videoMode || defaultConfig.videoMode,
         videoProviderMode: node.metadata?.videoProviderMode ?? globalConfig.videoProviderMode ?? defaultConfig.videoProviderMode,
+        videoProviderParams: node.metadata?.videoProviderParams ?? globalConfig.videoProviderParams ?? defaultConfig.videoProviderParams,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -175,6 +176,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoMode") return { videoMode: value };
     if (key === "videoProviderMode") return { videoProviderMode: value };
+    if (key === "videoProviderParams") return { videoProviderParams: value };
     return { [key]: value };
 }
 

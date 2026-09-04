@@ -347,6 +347,7 @@ function InfiniteCanvasPage() {
                                   watermark: generationConfig.videoWatermark,
                                   videoMode: generationConfig.videoMode,
                                   videoProviderMode: generationConfig.videoProviderMode,
+                                  videoProviderParams: generationConfig.videoProviderParams,
                               })
                             : item,
                     ),
@@ -2508,6 +2509,7 @@ function InfiniteCanvasPage() {
                             watermark: generationConfig.videoWatermark,
                             videoMode: generationConfig.videoMode,
                             videoProviderMode: generationConfig.videoProviderMode,
+                            videoProviderParams: generationConfig.videoProviderParams,
                             references: generationReferenceUrls(generationContext),
                         },
                     };
@@ -2528,6 +2530,7 @@ function InfiniteCanvasPage() {
                             watermark: generationConfig.videoWatermark,
                             videoMode: generationConfig.videoMode,
                             videoProviderMode: generationConfig.videoProviderMode,
+                            videoProviderParams: generationConfig.videoProviderParams,
                             references: generationReferenceUrls(generationContext),
                         }, generationContext.referenceVideos, generationContext.referenceAudios);
                     } finally {
@@ -2784,6 +2787,7 @@ function InfiniteCanvasPage() {
                         watermark: generationConfig.videoWatermark,
                         videoMode: generationConfig.videoMode,
                         videoProviderMode: generationConfig.videoProviderMode,
+                        videoProviderParams: generationConfig.videoProviderParams,
                     }, context?.referenceVideos || [], context?.referenceAudios || []);
                     return;
                 }

@@ -226,6 +226,15 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
     setFirst(input, accepts, ["watermark", "add_watermark", "enable_watermark"], source.params.watermark);
     setFirst(input, accepts, ["mode"], enumCompatibleValue(properties, ["mode"], String(source.params.providerMode || "")));
 
+    const providerParams = source.params.providerParams && typeof source.params.providerParams === "object" && !Array.isArray(source.params.providerParams)
+        ? source.params.providerParams as Record<string, unknown>
+        : {};
+    for (const [key, value] of Object.entries(providerParams)) {
+        if (input[key] !== undefined || !accepts(key)) continue;
+        const compatible = propertyCompatibleValue(properties[key], value);
+        if (compatible !== undefined) input[key] = compatible;
+    }
+
     for (const [key, definition] of Object.entries(properties)) {
         if (input[key] !== undefined || definition.default === undefined) continue;
         input[key] = definition.default;
@@ -317,6 +326,22 @@ function schemaCompatibleValue(properties: Record<string, Record<string, unknown
         const maximum = Number(definition?.maximum ?? definition?.max);
         const clamped = Math.max(Number.isFinite(minimum) ? minimum : numericValue, Math.min(Number.isFinite(maximum) ? maximum : numericValue, numericValue));
         return Number.isInteger(numericValue) ? Math.round(clamped) : clamped;
+    }
+    return value;
+}
+
+function propertyCompatibleValue(definition: Record<string, unknown> | undefined, value: unknown) {
+    if (value === undefined || value === null || value === "") return undefined;
+    const enumValues = Array.isArray(definition?.enum) ? definition.enum.filter((item) => ["string", "number", "boolean"].includes(typeof item)) : [];
+    if (enumValues.length) return enumValues.find((item) => String(item).toLowerCase() === String(value).toLowerCase());
+    if (definition?.type === "boolean") return typeof value === "boolean" ? value : String(value).toLowerCase() === "true";
+    if (definition?.type === "integer" || definition?.type === "number") {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return undefined;
+        const minimum = Number(definition.minimum ?? definition.min);
+        const maximum = Number(definition.maximum ?? definition.max);
+        const clamped = Math.max(Number.isFinite(minimum) ? minimum : numeric, Math.min(Number.isFinite(maximum) ? maximum : numeric, numeric));
+        return definition.type === "integer" ? Math.round(clamped) : clamped;
     }
     return value;
 }

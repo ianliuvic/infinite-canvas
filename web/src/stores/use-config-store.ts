@@ -45,6 +45,7 @@ export type AiConfig = {
     videoWatermark: string;
     videoMode: string;
     videoProviderMode: string;
+    videoProviderParams: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -113,6 +114,7 @@ export const defaultConfig: AiConfig = {
     videoWatermark: "false",
     videoMode: "frames",
     videoProviderMode: "",
+    videoProviderParams: "{}",
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -273,6 +275,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoWatermark: config.videoWatermark || "false",
                         videoMode: config.videoMode === "reference" ? "reference" : "frames",
                         videoProviderMode: config.videoProviderMode || "",
+                        videoProviderParams: config.videoProviderParams || "{}",
                         canvasImageCount: config.canvasImageCount || "3",
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,

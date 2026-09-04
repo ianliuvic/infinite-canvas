@@ -25,7 +25,7 @@ export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MA
 type VideoSettingsPanelProps = {
     config: AiConfig;
     model?: string;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoProviderMode", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoProviderMode" | "videoProviderParams", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -46,6 +46,8 @@ export function VideoSettingsPanel({ config, model, onConfigChange, theme, showT
     const showRatio = !crunSettings || crunSettings.fields.has("ratio");
     const showAudio = !crunSettings || crunSettings.fields.has("audio");
     const showWatermark = !crunSettings || crunSettings.fields.has("watermark");
+    const providerParams = parseProviderParams(config.videoProviderParams);
+    const updateProviderParam = (name: string, value: unknown) => onConfigChange("videoProviderParams", JSON.stringify({ ...providerParams, [name]: value }));
     const applySize = (nextResolution: string, ratio: string) => {
         onConfigChange("vquality", nextResolution);
         onConfigChange("size", computeVideoSize(nextResolution, ratio));
@@ -116,6 +118,7 @@ export function VideoSettingsPanel({ config, model, onConfigChange, theme, showT
                         {crunSettings.providerModes.map((value) => <OptionPill key={value} selected={(config.videoProviderMode || crunSettings.providerModeDefault) === value} theme={theme} onClick={() => onConfigChange("videoProviderMode", value)}>{value}</OptionPill>)}
                     </div>
                 </SettingGroup> : null}
+                {crunSettings?.providerFields.map((field) => <ProviderSetting key={field.name} field={field} value={providerParams[field.name] ?? field.defaultValue} theme={theme} onChange={(value) => updateProviderParam(field.name, value)} />)}
                 {showAudio ? <BooleanSetting title={t("settingsPanels.video.generateAudio")} value={config.videoGenerateAudio !== "false"} theme={theme} onChange={(value) => onConfigChange("videoGenerateAudio", String(value))} /> : null}
                 {showWatermark ? <BooleanSetting title={t("settingsPanels.video.watermark")} value={config.videoWatermark === "true"} theme={theme} onChange={(value) => onConfigChange("videoWatermark", String(value))} /> : null}
             </div>
@@ -218,7 +221,8 @@ function SecondsInput({ value, min, max, theme, onCommit }: { value: number; min
 }
 
 type CrunVideoField = "resolution" | "ratio" | "duration" | "audio" | "watermark" | "size" | "width" | "height";
-type CrunVideoSettings = { fields: Set<CrunVideoField>; resolutions: string[]; ratios: string[]; durations: number[]; durationMin?: number; durationMax?: number; providerModes: string[]; providerModeDefault: string };
+type ProviderField = { name: string; label: string; type: string; enumValues: Array<string | number | boolean>; defaultValue?: unknown; min?: number; max?: number };
+type CrunVideoSettings = { fields: Set<CrunVideoField>; resolutions: string[]; ratios: string[]; durations: number[]; durationMin?: number; durationMax?: number; providerModes: string[]; providerModeDefault: string; providerFields: ProviderField[] };
 
 function useCrunVideoSettings(config: AiConfig, explicitModel?: string) {
     const selectedModel = explicitModel || config.model || config.videoModel;
@@ -257,6 +261,14 @@ function parseCrunVideoSettings(schema: Record<string, unknown>): CrunVideoSetti
     for (const field of ["size", "width", "height"] as const) if (properties[field]) fields.add(field);
     const durationValues = schemaEnum(duration).map(Number).filter(Number.isFinite);
     const providerMode = properties.mode;
+    const commonFields = new Set(["prompt", "text", "description", "resolution", "output_resolution", "aspect_ratio", "aspectRatio", "ratio", "duration", "seconds", "audio", "generate_audio", "with_audio", "watermark", "add_watermark", "enable_watermark", "mode", "size", "width", "height", "image", "img_url", "image_url", "input_image", "reference_image", "images", "img_urls", "image_urls", "reference_images", "reference_image_urls", "video", "video_url", "input_video", "reference_video", "videos", "video_list", "video_urls", "reference_videos", "audio_url", "input_audio", "reference_audio", "audios", "audio_urls", "reference_audios"]);
+    const providerFields = Object.entries(properties).flatMap(([name, definition]) => {
+        if (commonFields.has(name) || definition.type === "array" || definition.type === "object") return [];
+        const enumValues = schemaEnum(definition);
+        const type = String(definition.type || (enumValues.length ? typeof enumValues[0] : "string"));
+        if (!enumValues.length && !["boolean", "integer", "number", "string"].includes(type)) return [];
+        return [{ name, label: String(definition.title || definition.description || name), type, enumValues, defaultValue: definition.default, min: finiteNumber(definition.minimum ?? definition.min), max: finiteNumber(definition.maximum ?? definition.max) }];
+    });
     return {
         fields,
         resolutions: schemaEnum(resolution).map(String),
@@ -266,6 +278,7 @@ function parseCrunVideoSettings(schema: Record<string, unknown>): CrunVideoSetti
         durationMax: finiteNumber(duration?.maximum ?? duration?.max),
         providerModes: schemaEnum(providerMode).map(String),
         providerModeDefault: typeof providerMode?.default === "string" ? providerMode.default : "",
+        providerFields,
     };
 }
 
@@ -316,6 +329,22 @@ function finiteNumber(value: unknown) {
 
 function BooleanSetting({ title, value, theme, onChange }: { title: string; value: boolean; theme: CanvasTheme; onChange: (value: boolean) => void }) {
     return <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>{title}</span><span onMouseDown={(event) => event.stopPropagation()}><Switch size="small" checked={value} onChange={onChange} /></span></div>;
+}
+
+function ProviderSetting({ field, value, theme, onChange }: { field: ProviderField; value: unknown; theme: CanvasTheme; onChange: (value: unknown) => void }) {
+    if (field.enumValues.length) return <SettingGroup title={field.label} color={theme.node.muted}><div className="grid grid-cols-3 gap-2.5">{field.enumValues.map((option) => <OptionPill key={String(option)} selected={String(value) === String(option)} theme={theme} onClick={() => onChange(option)}>{String(option)}</OptionPill>)}</div></SettingGroup>;
+    if (field.type === "boolean") return <BooleanSetting title={field.label} value={Boolean(value)} theme={theme} onChange={onChange} />;
+    if (field.type === "integer" || field.type === "number") return <SettingGroup title={field.label} color={theme.node.muted}><input type="number" min={field.min} max={field.max} value={typeof value === "number" || typeof value === "string" ? value : ""} className="h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onChange={(event) => onChange(field.type === "integer" ? Math.round(Number(event.target.value)) : Number(event.target.value))} onMouseDown={(event) => event.stopPropagation()} /></SettingGroup>;
+    return <SettingGroup title={field.label} color={theme.node.muted}><input type="text" value={typeof value === "string" ? value : ""} className="h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} /></SettingGroup>;
+}
+
+function parseProviderParams(value: string) {
+    try {
+        const parsed = JSON.parse(value || "{}");
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+        return {};
+    }
 }
 
 function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
