@@ -15,6 +15,7 @@ import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
 import { CrunHttpError, describeCrunCanvasModel, generateWithCrun, listCrunCanvasModels } from "./crun.js";
+import { PersistentStorage, StorageNotConfiguredError } from "./persistent-storage.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -27,6 +28,7 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
+    const persistentStorage = new PersistentStorage();
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
         const value = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload };
@@ -123,7 +125,7 @@ export function startHttpServer() {
         if (req.method === "OPTIONS") return void res.json({});
         next();
     });
-    app.get("/health", (_req, res) => res.json(session.health()));
+    app.get("/health", (_req, res) => res.json({ ...session.health(), storage: persistentStorage.status() }));
     app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true }));
     app.post("/session", (req, res) => {
         const supplied = String(req.headers["x-canvas-agent-token"] || req.body?.token || "");
@@ -142,6 +144,37 @@ export function startHttpServer() {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
     });
+    app.get("/storage/status", (_req, res) => res.json({ ok: true, ...persistentStorage.status() }));
+    app.get("/storage/state/:key", route(async (req, res) => {
+        const state = await persistentStorage.getState(storageKey(req.params.key));
+        if (!state) return void res.status(404).json({ ok: false, error: "state not found" });
+        res.setHeader("Cache-Control", "no-store");
+        res.json({ ok: true, ...state });
+    }));
+    app.put("/storage/state/:key", route(async (req, res) => {
+        const value = typeof req.body?.value === "string" ? req.body.value : "";
+        if (!value) return void res.status(400).json({ ok: false, error: "state value is required" });
+        res.json({ ok: true, ...(await persistentStorage.putState(storageKey(req.params.key), value)) });
+    }));
+    app.delete("/storage/state/:key", route(async (req, res) => {
+        await persistentStorage.deleteState(storageKey(req.params.key));
+        res.json({ ok: true });
+    }));
+    app.put("/storage/objects/:key", express.raw({ type: "application/octet-stream", limit: "35mb" }), route(async (req, res) => {
+        if (!Buffer.isBuffer(req.body)) return void res.status(400).json({ ok: false, error: "binary object body is required" });
+        await persistentStorage.putObject(storageKey(req.params.key), req.body, String(req.headers["x-canvas-content-type"] || "application/octet-stream"));
+        res.json({ ok: true, bytes: req.body.length });
+    }));
+    app.get("/storage/objects/:key", route(async (req, res) => {
+        const object = await persistentStorage.getObject(storageKey(req.params.key));
+        if (!object) return void res.status(404).json({ ok: false, error: "object not found" });
+        res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+        res.type(object.contentType).send(object.data);
+    }));
+    app.delete("/storage/objects/:key", route(async (req, res) => {
+        await persistentStorage.deleteObject(storageKey(req.params.key));
+        res.json({ ok: true });
+    }));
     app.get("/events", (req, res) => {
         session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
     });
@@ -460,7 +493,7 @@ export function startHttpServer() {
     app.use((_req, res) => res.status(404).json({ ok: false, error: "not found" }));
     app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
         logger.error("HTTP request failed", { method: req.method, path: req.path, error });
-        if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
+        if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError || error instanceof StorageNotConfiguredError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
         res.status(500).json({ ok: false, error: error.message });
     });
 
@@ -494,6 +527,12 @@ function route(handler: (req: Request, res: Response) => Promise<unknown>) {
 /** 从 Express 路由参数中读取单个字符串。 */
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
+}
+
+function storageKey(value: string | string[]) {
+    const key = routeParam(value).trim();
+    if (!key || key.length > 240 || /[\x00-\x1f]/.test(key)) throw new Error("invalid storage key");
+    return key;
 }
 
 function permissionMode(value: unknown): AgentPermissionMode {
@@ -555,8 +594,8 @@ function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfi
     const origin = req.headers.origin;
     if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Headers", "authorization,content-type,x-canvas-agent-token");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "authorization,content-type,x-canvas-agent-token,x-canvas-content-type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (!origin || url.pathname === "/health" || url.pathname === "/config") return true;
     if (req.method === "OPTIONS") return !config.origins?.length || config.origins.includes(origin);
