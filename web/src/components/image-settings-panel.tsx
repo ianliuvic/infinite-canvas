@@ -22,6 +22,7 @@ export const imageScaleOptions = mediaScaleOptions.map((value) => ({ value, labe
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
+    model?: string;
     onConfigChange: (key: "quality" | "size" | "count" | "background", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
@@ -30,14 +31,14 @@ type ImageSettingsPanelProps = {
     quickCount?: number;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, model, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const { t } = useTranslation();
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
-    const crunSettings = useCrunImageSettings(config);
+    const crunSettings = useCrunImageSettings(config, model);
     const showQuality = !crunSettings || crunSettings.fields.has("quality");
     const showDimensions = !crunSettings || crunSettings.fields.has("size") || (crunSettings.fields.has("width") && crunSettings.fields.has("height"));
     const showResolution = !crunSettings || crunSettings.fields.has("resolution");
@@ -161,8 +162,8 @@ type CrunImageSettings = {
     ratios: string[];
 };
 
-function useCrunImageSettings(config: AiConfig) {
-    const selectedModel = config.model || config.imageModel;
+function useCrunImageSettings(config: AiConfig, explicitModel?: string) {
+    const selectedModel = explicitModel || config.model || config.imageModel;
     const channel = resolveModelChannel(config, selectedModel);
     const isCrun = channel.id === "crun";
     const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
