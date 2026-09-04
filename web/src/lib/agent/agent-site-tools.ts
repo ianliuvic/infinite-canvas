@@ -5,10 +5,11 @@ import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
 import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
-import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { buildEntityCanvasPlacement, entitySearchText } from "@/lib/canvas/entity-canvas";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useAssetStore, type EntityAssetRole, type EntityKind } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
@@ -25,6 +26,10 @@ export const SITE_TOOL_NAMES = [
     "prompts_search",
     "assets_list",
     "assets_add",
+    "entities_search",
+    "entities_get",
+    "entities_add",
+    "entities_place_on_canvas",
 ] as const;
 
 export type SiteToolName = (typeof SITE_TOOL_NAMES)[number];
@@ -47,10 +52,14 @@ export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
     get prompts_search() { return siteText("promptSearch"); },
     get assets_list() { return siteText("assetList"); },
     get assets_add() { return siteText("assetAdd"); },
+    get entities_search() { return siteText("entitySearch"); },
+    get entities_get() { return siteText("entityGet"); },
+    get entities_add() { return siteText("entityAdd"); },
+    get entities_place_on_canvas() { return siteText("entityPlace"); },
 };
 
 type SiteToolInput = Record<string, unknown>;
-type SiteToolContext = { canvasSnapshot?: CanvasAgentSnapshot | null };
+type SiteToolContext = { canvasSnapshot?: CanvasAgentSnapshot | null; applyOps?: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot };
 type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
 type GenerationStatusItem = { id: string; source: "canvas" | "image" | "video"; status: GenerationStatus; kind?: string; title?: string; prompt?: string; projectId?: string; createdAt?: string; updatedAt?: string; successCount?: number; failCount?: number; error?: string };
 
@@ -74,6 +83,14 @@ export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navi
             return listAssets(input);
         case "assets_add":
             return addAsset(input);
+        case "entities_search":
+            return searchEntities(input);
+        case "entities_get":
+            return getEntity(input);
+        case "entities_add":
+            return addEntity(input);
+        case "entities_place_on_canvas":
+            return placeEntity(input, context);
         default:
             throw new Error(siteText("unknownTool", { name }));
     }
@@ -291,6 +308,90 @@ function listAssets(input: SiteToolInput) {
         content: asset.kind === "text" ? asset.data.content : undefined,
     }));
     return { total: filtered.length, page, pageSize, items };
+}
+
+function searchEntities(input: SiteToolInput) {
+    const { entities, hydrated } = useAssetStore.getState();
+    if (!hydrated) throw new Error(siteText("assetsLoading"));
+    const keyword = String(input.keyword || "").trim().toLowerCase();
+    const kind = typeof input.kind === "string" ? input.kind : "all";
+    const tags = new Set(Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : []);
+    const filtered = entities.filter((entity) => (kind === "all" || entity.kind === kind) && (!tags.size || [...tags].every((tag) => entity.tags.includes(tag))) && (!keyword || entitySearchText(entity).includes(keyword)));
+    const { page, pageSize, start, end } = paginate(input, filtered.length, 20);
+    return { total: filtered.length, page, pageSize, items: filtered.slice(start, end).map(compactEntity) };
+}
+
+function getEntity(input: SiteToolInput) {
+    const entity = findEntity(input);
+    if (!entity) throw new Error(siteText("entityNotFound"));
+    const assetById = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
+    return {
+        ...entity,
+        members: entity.members.flatMap((member) => {
+            const asset = assetById.get(member.assetId);
+            return asset ? [{ ...member, title: asset.title, kind: asset.kind, tags: asset.tags, width: asset.kind === "text" ? undefined : asset.data.width, height: asset.kind === "text" ? undefined : asset.data.height }] : [];
+        }),
+    };
+}
+
+function addEntity(input: SiteToolInput) {
+    const name = String(input.name || "").trim();
+    if (!name) throw new Error(siteText("entityNameRequired"));
+    const store = useAssetStore.getState();
+    const assetIds = new Set(store.assets.map((asset) => asset.id));
+    const members = Array.isArray(input.members)
+        ? input.members.flatMap((item) => {
+              const member = item && typeof item === "object" ? item as Record<string, unknown> : {};
+              const assetId = String(member.assetId || "");
+              return assetIds.has(assetId) ? [{ assetId, role: entityRole(member.role), ...(typeof member.note === "string" ? { note: member.note } : {}) }] : [];
+          })
+        : [];
+    const id = store.addEntity({
+        kind: entityKind(input.kind),
+        name,
+        aliases: stringArray(input.aliases),
+        tags: stringArray(input.tags),
+        summary: String(input.summary || ""),
+        description: String(input.description || ""),
+        prompt: String(input.prompt || ""),
+        negativePrompt: String(input.negativePrompt || ""),
+        usageRules: String(input.usageRules || ""),
+        members,
+    });
+    return { ok: true, id, name, memberCount: members.length };
+}
+
+function placeEntity(input: SiteToolInput, context: SiteToolContext) {
+    const entity = findEntity(input);
+    if (!entity) throw new Error(siteText("entityNotFound"));
+    if (!context.canvasSnapshot || !context.applyOps) throw new Error(siteText("openCanvasFirst"));
+    const placement = buildEntityCanvasPlacement(entity, useAssetStore.getState().assets, context.canvasSnapshot, { assetIds: stringArray(input.assetIds), maxReferences: Number(input.maxReferences) || undefined });
+    context.applyOps(placement.ops);
+    return { ok: true, entity: compactEntity(entity), groupId: placement.groupId, profileNodeId: placement.profileNodeId, referenceNodeIds: placement.referenceNodeIds, hint: siteText("entityPlaceHint") };
+}
+
+function findEntity(input: SiteToolInput) {
+    const { entities } = useAssetStore.getState();
+    const id = String(input.entityId || "");
+    if (id) return entities.find((entity) => entity.id === id);
+    const name = String(input.name || input.keyword || "").trim().toLowerCase();
+    return entities.find((entity) => entity.name.toLowerCase() === name || entity.aliases.some((alias) => alias.toLowerCase() === name)) || entities.find((entity) => entitySearchText(entity).includes(name));
+}
+
+function compactEntity(entity: ReturnType<typeof useAssetStore.getState>["entities"][number]) {
+    return { id: entity.id, kind: entity.kind, name: entity.name, aliases: entity.aliases, summary: entity.summary, tags: entity.tags, prompt: entity.prompt, negativePrompt: entity.negativePrompt, usageRules: entity.usageRules, memberCount: entity.members.length, updatedAt: entity.updatedAt };
+}
+
+function stringArray(value: unknown) {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function entityKind(value: unknown): EntityKind {
+    return value === "product" || value === "scene" || value === "style" || value === "brand" || value === "other" ? value : "person";
+}
+
+function entityRole(value: unknown): EntityAssetRole {
+    return value === "primary" || value === "identity" || value === "fullBody" || value === "detail" || value === "expression" || value === "outfit" || value === "background" || value === "product" || value === "style" ? value : "reference";
 }
 
 async function addAsset(input: SiteToolInput) {

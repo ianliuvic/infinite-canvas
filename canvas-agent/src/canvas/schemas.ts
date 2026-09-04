@@ -3,7 +3,7 @@ import { z } from "zod";
 const recordSchema = z.record(z.unknown());
 const positionSchema = z.object({ x: z.number(), y: z.number() });
 const viewportSchema = z.object({ x: z.number(), y: z.number(), k: z.number() });
-const nodeTypeSchema = z.enum(["image", "text", "config", "video", "audio"]);
+const nodeTypeSchema = z.enum(["image", "text", "config", "video", "audio", "group"]);
 const generationModeSchema = z.enum(["text", "image", "video", "audio"]);
 
 /** Canvas Agent 对外提供的工具名称。 */
@@ -42,6 +42,10 @@ export const toolNames = [
     "prompts_search",
     "assets_list",
     "assets_add",
+    "entities_search",
+    "entities_get",
+    "entities_add",
+    "entities_place_on_canvas",
 ] as const;
 export type ToolName = (typeof toolNames)[number];
 
@@ -124,6 +128,21 @@ export const toolInputSchemas = {
     prompts_search: z.object({ keyword: z.string().optional(), category: z.string().optional(), tags: z.array(z.string()).optional(), page: z.number().optional(), pageSize: z.number().optional() }),
     assets_list: z.object({ kind: z.enum(["all", "text", "image", "video"]).optional(), keyword: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() }),
     assets_add: z.object({ kind: z.enum(["text", "image"]), title: z.string(), content: z.string().optional(), imageUrl: z.string().optional(), tags: z.array(z.string()).optional(), source: z.string().optional(), note: z.string().optional() }),
+    entities_search: z.object({ keyword: z.string().optional(), kind: z.enum(["all", "person", "product", "scene", "style", "brand", "other"]).optional(), tags: z.array(z.string()).optional(), page: z.number().optional(), pageSize: z.number().optional() }),
+    entities_get: z.object({ entityId: z.string().optional(), name: z.string().optional() }),
+    entities_add: z.object({
+        name: z.string(),
+        kind: z.enum(["person", "product", "scene", "style", "brand", "other"]).optional(),
+        aliases: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        summary: z.string().optional(),
+        description: z.string().optional(),
+        prompt: z.string().optional(),
+        negativePrompt: z.string().optional(),
+        usageRules: z.string().optional(),
+        members: z.array(z.object({ assetId: z.string(), role: z.enum(["primary", "identity", "fullBody", "detail", "expression", "outfit", "background", "product", "style", "reference"]).optional(), note: z.string().optional() })).optional(),
+    }),
+    entities_place_on_canvas: z.object({ entityId: z.string().optional(), name: z.string().optional(), assetIds: z.array(z.string()).optional(), maxReferences: z.number().int().min(1).max(12).optional() }),
 } satisfies Record<ToolName, z.AnyZodObject>;
 
 export const toolDescriptions: Record<ToolName, string> = {
@@ -133,7 +152,7 @@ export const toolDescriptions: Record<ToolName, string> = {
     canvas_get_selection: "读取当前网页画布选中的节点。",
     canvas_export_snapshot: "导出当前画布快照，用于理解布局。",
     canvas_apply_ops: "批量操作当前网页画布。ops 支持 add_node、update_node、delete_node、delete_connections、connect_nodes、set_viewport、select_nodes、run_generation。",
-    canvas_create_node: "创建任意类型节点：text、image、config、video、audio。适合创建占位图、媒体占位、配置节点或自定义 metadata 节点。",
+    canvas_create_node: "创建任意类型节点：text、image、config、video、audio、group。适合创建占位图、媒体占位、配置节点、分组或自定义 metadata 节点。",
     canvas_create_attachment_nodes: "把当前对话中用户上传的图片附件创建成真实画布图片节点。attachmentIds 使用本轮附件清单中的 ID；返回的节点 ID 可传给 canvas_create_generation_flow.referenceNodeIds 作为生成参考图。",
     canvas_create_text_node: "在当前画布创建单个文本节点。",
     canvas_create_text_nodes: "批量创建文本节点，适合生成标题、段落、脚本、说明等内容块。",
@@ -161,4 +180,8 @@ export const toolDescriptions: Record<ToolName, string> = {
     prompts_search: "搜索提示词库（第三方提示词合集），支持 keyword、category、tags 过滤和 page/pageSize 分页，返回标题、提示词、分类、标签、封面等。",
     assets_list: "列出用户「我的素材」，支持 kind（text/image/video）过滤、keyword 搜索和 page/pageSize 分页。为控制体积不返回图片/视频原始 data，仅返回封面与元信息。",
     assets_add: "向「我的素材」新增素材。kind=text 时用 content 传文本内容；kind=image 时用 imageUrl 传图片地址或 dataURL。可附带 title、tags、source、note。",
+    entities_search: "搜索实体资产库中的人物、产品、场景、风格或品牌。用户提到角色名、产品名或资产组时应先调用本工具；支持 keyword、kind、tags 与分页。",
+    entities_get: "读取一个实体的完整档案、固定生成描述、禁用内容、使用规则和成员素材。先用 entities_search 找到 entityId，再调用本工具，不要仅凭名字猜测。",
+    entities_add: "创建实体资产，并可通过 members 关联已有单项资产。成员 assetId 可由 assets_list 获得；role 用于区分身份、全身、细节、背景、产品、风格等参考用途。",
+    entities_place_on_canvas: "将实体以完整实体板放到当前视口中央：包含分组、资料卡、最多 12 个参考图片/视频节点及连线。返回 referenceNodeIds 后，可将其传入 canvas_create_generation_flow 或 canvas_generate_image；用户只要求放置时不要自动生成。",
 };

@@ -1,19 +1,20 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { BookOpen, Boxes, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
+import { entityKindLabel, entitySearchText } from "@/lib/canvas/entity-canvas";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
-import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
+import { useAssetStore, type Asset, type AssetEntity, type AssetKind } from "@/stores/use-asset-store";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -32,6 +33,7 @@ type Props = {
     onFocusNode: (nodeId: string) => void;
     onPreviewNode: (nodeId: string) => void;
     onInsertAsset: (payload: InsertAssetPayload) => void;
+    onInsertEntity: (entityId: string) => void;
 };
 
 const NODE_TYPE_ICON: Record<string, typeof Square> = {
@@ -50,7 +52,7 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
-export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset }: Props) {
+export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset, onInsertEntity }: Props) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
@@ -108,7 +110,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
                     {tab === "canvas" ? (
                         <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} theme={theme} />
                     ) : tab === "assets" ? (
-                        <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />
+                        <CanvasAssetsTab onInsert={onInsertAsset} onInsertEntity={onInsertEntity} theme={theme} />
                     ) : (
                         <CanvasPromptsTab onInsert={onInsertAsset} theme={theme} />
                     )}
@@ -308,10 +310,11 @@ function buildInsertPayload(asset: Asset): InsertAssetPayload {
     return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
 }
 
-const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
+const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, onInsertEntity, theme }: { onInsert: (payload: InsertAssetPayload) => void; onInsertEntity: (entityId: string) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const assets = useAssetStore((state) => state.assets);
+    const entities = useAssetStore((state) => state.entities);
     const addAsset = useAssetStore((state) => state.addAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
@@ -328,6 +331,10 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     }, [assets, keyword, tagFilter]);
 
     const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
+    const filteredEntities = useMemo(() => {
+        const query = keyword.trim().toLowerCase();
+        return entities.filter((entity) => !query || entitySearchText(entity).includes(query));
+    }, [entities, keyword]);
 
     const handleFiles = async (fileList: FileList | null) => {
         const files = Array.from(fileList || []);
@@ -388,8 +395,29 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {groups.length ? (
+                {filteredEntities.length || groups.length ? (
                     <div className="space-y-1">
+                        {filteredEntities.length ? (
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={() => setCollapsed((prev) => ({ ...prev, entities: !prev.entities }))}
+                                    className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100"
+                                >
+                                    <ChevronRight className={cn("size-3.5 transition-transform", !collapsed.entities && "rotate-90")} />
+                                    <Boxes className="size-3.5" />
+                                    <span>{t("canvas.sidePanel.entities")}</span>
+                                    <span className="opacity-50">{filteredEntities.length}</span>
+                                </button>
+                                {collapsed.entities ? null : (
+                                    <div className="grid grid-cols-2 gap-2 px-1 pb-3 pt-1">
+                                        {filteredEntities.map((entity) => (
+                                            <EntityAssetCard key={entity.id} entity={entity} assets={assets} theme={theme} onInsert={() => { onInsertEntity(entity.id); message.success(t("canvas.sidePanel.entityInserted", { name: entity.name })); }} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : null}
                         {groups.map((group) => {
                             const isCollapsed = collapsed[group.kind];
                             return (
@@ -422,6 +450,23 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         </div>
     );
 });
+
+function EntityAssetCard({ entity, assets, theme, onInsert }: { entity: AssetEntity; assets: Asset[]; theme: CanvasTheme; onInsert: () => void }) {
+    const { t } = useTranslation();
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const cover = entity.members.map((member) => assetById.get(member.assetId)).find((asset) => asset?.kind === "image");
+    const coverUrl = cover?.kind === "image" ? cover.coverUrl || cover.data.dataUrl : "";
+    return (
+        <button type="button" onClick={onInsert} title={t("canvas.sidePanel.insertEntity")} className="group relative aspect-[4/3] overflow-hidden rounded-xl border text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-lg" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
+            {coverUrl ? <img src={coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-amber-50 to-stone-100 dark:from-amber-950/30 dark:to-stone-900"><Boxes className="size-8 text-amber-600/70" /></div>}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/65 to-transparent px-2.5 pb-2 pt-7 text-white">
+                <div className="truncate text-xs font-semibold">{entity.name}</div>
+                <div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] text-white/70"><span>{entityKindLabel(entity.kind)}</span><span>{t("canvas.sidePanel.entityReferences", { count: entity.members.length })}</span></div>
+            </div>
+            <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-white/90 text-stone-800 opacity-0 shadow-sm transition group-hover:opacity-100"><Plus className="size-3.5" /></span>
+        </button>
+    );
+}
 
 function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
     const { t } = useTranslation();

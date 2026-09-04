@@ -35,6 +35,10 @@ const SITE_TOOLS = new Set<ToolName>([
     "prompts_search",
     "assets_list",
     "assets_add",
+    "entities_search",
+    "entities_get",
+    "entities_add",
+    "entities_place_on_canvas",
     "generation_get_status",
 ]);
 

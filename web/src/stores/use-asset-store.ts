@@ -7,6 +7,24 @@ import { cleanupUnusedImages, resolveImageUrl, uploadImage } from "@/services/im
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
 export type AssetKind = "text" | "image" | "video";
+export type EntityKind = "person" | "product" | "scene" | "style" | "brand" | "other";
+export type EntityAssetRole = "primary" | "identity" | "fullBody" | "detail" | "expression" | "outfit" | "background" | "product" | "style" | "reference";
+export type EntityAssetMember = { assetId: string; role: EntityAssetRole; note?: string };
+export type AssetEntity = {
+    id: string;
+    kind: EntityKind;
+    name: string;
+    aliases: string[];
+    summary: string;
+    description: string;
+    tags: string[];
+    prompt: string;
+    negativePrompt: string;
+    usageRules: string;
+    members: EntityAssetMember[];
+    createdAt: string;
+    updatedAt: string;
+};
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
 export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
@@ -28,10 +46,15 @@ type AssetBase<T extends AssetKind> = {
 type AssetStore = {
     hydrated: boolean;
     assets: Asset[];
+    entities: AssetEntity[];
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     removeAsset: (id: string) => void;
     replaceAssets: (assets: Asset[]) => void;
+    addEntity: (entity: Omit<AssetEntity, "id" | "createdAt" | "updatedAt">) => string;
+    updateEntity: (id: string, patch: Partial<Omit<AssetEntity, "id" | "createdAt">>) => void;
+    removeEntity: (id: string) => void;
+    replaceEntities: (entities: AssetEntity[]) => void;
     cleanupImages: (extra?: unknown) => void;
 };
 
@@ -68,6 +91,7 @@ export const useAssetStore = create<AssetStore>()(
         (set, get) => ({
             hydrated: false,
             assets: [],
+            entities: [],
             addAsset: (asset) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -81,10 +105,20 @@ export const useAssetStore = create<AssetStore>()(
             removeAsset: (id) =>
                 set((state) => {
                     const assets = state.assets.filter((asset) => asset.id !== id);
-                    get().cleanupImages({ assets });
-                    return { assets };
+                    const entities = state.entities.map((entity) => ({ ...entity, members: entity.members.filter((member) => member.assetId !== id), updatedAt: entity.members.some((member) => member.assetId === id) ? new Date().toISOString() : entity.updatedAt }));
+                    get().cleanupImages({ assets, entities });
+                    return { assets, entities };
                 }),
             replaceAssets: (assets) => set({ assets }),
+            addEntity: (entity) => {
+                const now = new Date().toISOString();
+                const id = nanoid();
+                set((state) => ({ entities: [{ ...entity, id, createdAt: now, updatedAt: now }, ...state.entities] }));
+                return id;
+            },
+            updateEntity: (id, patch) => set((state) => ({ entities: state.entities.map((entity) => (entity.id === id ? { ...entity, ...patch, updatedAt: new Date().toISOString() } : entity)) })),
+            removeEntity: (id) => set((state) => ({ entities: state.entities.filter((entity) => entity.id !== id) })),
+            replaceEntities: (entities) => set({ entities }),
             cleanupImages: (extra) => {
                 window.setTimeout(async () => {
                     const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
@@ -96,7 +130,7 @@ export const useAssetStore = create<AssetStore>()(
         {
             name: ASSET_STORE_KEY,
             storage: assetStorage,
-            partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
+            partialize: (state) => ({ assets: state.assets, entities: state.entities }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });
             },

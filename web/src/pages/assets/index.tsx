@@ -1,6 +1,6 @@
 import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Segmented, Select, Space, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -11,6 +11,7 @@ import { getImageBlob, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
+import { EntityLibrary } from "./entity-library";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -39,6 +40,7 @@ export default function AssetsPage() {
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
+    const [viewMode, setViewMode] = useState<"entities" | "assets">("entities");
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
@@ -209,7 +211,7 @@ export default function AssetsPage() {
                             allowClear
                             prefix={<Search className="size-4 text-stone-400" />}
                             value={keyword}
-                            placeholder={t("assets.search")}
+                            placeholder={t(viewMode === "entities" ? "entities.search" : "assets.search")}
                             onChange={(event) => {
                                 setPage(1);
                                 setKeyword(event.target.value);
@@ -219,9 +221,16 @@ export default function AssetsPage() {
                                 setKeyword(value);
                             }}
                         />
+                        <Segmented
+                            block
+                            className="mt-3"
+                            value={viewMode}
+                            options={[{ value: "entities", label: t("entities.title") }, { value: "assets", label: t("entities.singleAssets") }]}
+                            onChange={(value) => { setKeyword(""); setViewMode(value as "entities" | "assets"); }}
+                        />
                     </div>
 
-                    <div className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
+                    <div className={cn("mx-auto mt-6 max-w-6xl gap-3 text-left", viewMode === "assets" ? "grid" : "hidden")}>
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
                                 <div className="text-xs font-medium text-stone-500 dark:text-stone-400">{t("assets.type")}</div>
@@ -268,7 +277,8 @@ export default function AssetsPage() {
                     </div>
                 </div>
 
-                <div className="mx-auto flex max-w-7xl flex-col gap-5">
+                {viewMode === "entities" ? <EntityLibrary keyword={keyword} /> : null}
+                <div className={cn("mx-auto max-w-7xl flex-col gap-5", viewMode === "assets" ? "flex" : "hidden")}>
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {visibleAssets.map((asset) => (
                             <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />

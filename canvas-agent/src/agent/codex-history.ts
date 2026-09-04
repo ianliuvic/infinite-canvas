@@ -541,6 +541,10 @@ function toolHistorySummary(tool: string, item: unknown, input: unknown) {
     if (tool === "prompts_search") return `找到 ${numberValue(field(result, "total"))} 条提示词`;
     if (tool === "assets_list") return `共 ${numberValue(field(result, "total"))} 个资产`;
     if (tool === "assets_add") return "已加入我的素材";
+    if (tool === "entities_search") return `找到 ${numberValue(field(result, "total"))} 个实体`;
+    if (tool === "entities_get") return `已读取实体：${String(field(result, "name") || "")}`;
+    if (tool === "entities_add") return `已创建实体：${String(field(result, "name") || "")}`;
+    if (tool === "entities_place_on_canvas") return `已将实体放入画布`;
     if (tool === "generation_get_status") {
         const summary = field(result, "summary");
         return `共 ${numberValue(field(result, "total"))} 个任务，排队 ${numberValue(field(summary, "queued"))}，运行中 ${numberValue(field(summary, "running"))}，成功 ${numberValue(field(summary, "succeeded"))}，失败 ${numberValue(field(summary, "failed"))}`;
@@ -735,6 +739,10 @@ function toolName(name: string) {
     if (name === "prompts_search") return "搜索提示词";
     if (name === "assets_list") return "资产列表";
     if (name === "assets_add") return "添加资产";
+    if (name === "entities_search") return "搜索实体资产";
+    if (name === "entities_get") return "读取实体档案";
+    if (name === "entities_add") return "创建实体资产";
+    if (name === "entities_place_on_canvas") return "将实体放入画布";
     if (name === "generation_get_status") return "生成任务状态";
     return name ? `调用工具：${name}` : "工具操作";
 }

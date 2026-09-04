@@ -834,7 +834,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         if (isSiteTool(payload.name)) {
             try {
                 addEventLog(toolName(payload.name), payload, payload);
-                const result = await runSiteTool(payload.name, payload.input || {}, navigate, { canvasSnapshot: canvasContextRef.current?.snapshot || null });
+                const context = canvasContextRef.current;
+                const result = await runSiteTool(payload.name, payload.input || {}, navigate, { canvasSnapshot: context?.snapshot || null, applyOps: context?.applyOps });
                 await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
                 addEventLog(rt("toolCompleted", { tool: toolName(payload.name) }), result, result);
             } catch (error) {

@@ -19,6 +19,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { buildEntityCanvasPlacement } from "@/lib/canvas/entity-canvas";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
@@ -2994,6 +2995,25 @@ function InfiniteCanvasPage() {
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );
 
+    const handleEntityInsert = useCallback(
+        (entityId: string) => {
+            const store = useAssetStore.getState();
+            const entity = store.entities.find((item) => item.id === entityId);
+            if (!entity) return;
+            const placement = buildEntityCanvasPlacement(entity, store.assets, {
+                projectId,
+                title: currentProject?.title || "",
+                nodes: nodesRef.current,
+                connections: connectionsRef.current,
+                selectedNodeIds: [...selectedNodeIdsRef.current],
+                viewport: viewportRef.current,
+                viewportSize: size,
+            });
+            applyAgentOps(placement.ops);
+        },
+        [applyAgentOps, currentProject?.title, projectId, size],
+    );
+
     // Memoize every callback and render function passed to CanvasNode.
     // CanvasNode uses React.memo, but new prop references would invalidate it on every render and rerender every node
     // during click, hover, or viewport changes, which is especially expensive for Markdown. These useCallback values
@@ -3088,7 +3108,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onInsertEntity={handleEntityInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
