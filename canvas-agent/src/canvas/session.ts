@@ -5,7 +5,7 @@ import type { AgentAttachment } from "../agent/types.js";
 import { logger } from "../utils/logger.js";
 import { buildCanvasToolRequest, fitAttachmentNodeSize } from "./operations.js";
 import type { ToolName } from "./schemas.js";
-import { compactCanvasState, compactNode, isToolName, nextCanvasX, parseToolInput } from "./tools.js";
+import { compactCanvasState, compactNode, isToolName, parseToolInput } from "./tools.js";
 import type { CanvasSnapshot } from "./types.js";
 
 type PendingRequest = { clientId: string; resolve: (value: unknown) => void; reject: (error: Error) => void };
@@ -463,7 +463,8 @@ export class CanvasSession {
         const clientId = this.targetClientId;
         if (!this.clients.has(clientId)) throw new Error("当前没有已连接画布");
         const attachments = input.attachmentIds.map((id) => this.getTurnAttachment(clientId, id));
-        const x = Number(input.x ?? nextCanvasX(this.canvasState));
+        const explicit = input.x !== undefined || input.y !== undefined;
+        const x = Number(input.x ?? 0);
         const y = Number(input.y ?? 0);
         const gap = Number(input.gap ?? 40);
         const direction = input.direction || "row";
@@ -474,7 +475,9 @@ export class CanvasSession {
                 id: `image-${crypto.randomUUID()}`,
                 attachmentId: attachment.id,
                 title: attachment.name,
-                position: { x: direction === "row" ? x + offset : x, y: direction === "column" ? y + offset : y },
+                ...(explicit
+                    ? { position: { x: direction === "row" ? x + offset : x, y: direction === "column" ? y + offset : y } }
+                    : { autoPosition: true, autoOffset: { x: direction === "row" ? offset : 0, y: direction === "column" ? offset : 0 } }),
                 width: size.width,
                 height: size.height,
             };

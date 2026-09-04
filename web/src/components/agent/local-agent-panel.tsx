@@ -1563,7 +1563,7 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
     if (!nodes.length) throw new Error(rt("noImageAttachments"));
     return await Promise.all(
         nodes.map(async (value) => {
-            const item = value as { id?: unknown; attachmentId?: unknown; title?: unknown; position?: unknown };
+            const item = value as { id?: unknown; attachmentId?: unknown; title?: unknown; position?: unknown; autoPosition?: unknown; autoOffset?: unknown };
             const id = String(item.id || "");
             const attachmentId = String(item.attachmentId || "");
             if (!id || !attachmentId) throw new Error(rt("invalidAttachmentNode"));
@@ -1583,7 +1583,9 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
                 id,
                 nodeType: "image" as const,
                 title: String(item.title || rt("referenceImage")),
-                position: { x: Number(position.x) || 0, y: Number(position.y) || 0 },
+                ...(item.autoPosition
+                    ? { autoPosition: true, autoOffset: item.autoOffset && typeof item.autoOffset === "object" ? item.autoOffset as { x: number; y: number } : undefined }
+                    : { position: { x: Number(position.x) || 0, y: Number(position.y) || 0 } }),
                 width: size.width,
                 height: size.height,
                 metadata: imageMetadata(image),
