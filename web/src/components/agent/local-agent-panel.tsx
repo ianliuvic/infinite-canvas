@@ -19,6 +19,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentStore, type AgentAttachment, type AgentBootstrapStatus, type AgentCanvasContext, type AgentCanvasReference, type AgentChatItem, type AgentConversationState, type AgentModel, type AgentPendingApproval, type AgentPendingToolCall, type AgentPermissionMode, type AgentReasoningEffort, type AgentThreadSummary } from "@/stores/use-agent-store";
+import { modelOptionsFromChannels, useConfigStore, type ChannelModel } from "@/stores/use-config-store";
 import { type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool } from "@/lib/agent/agent-site-tools";
 import { acknowledgeCodexHistory, activateAgentClient, AgentApiError, discoverAgentConfig, establishAgentSession, fetchAgentJson, interruptCodexTurn, postCodexApproval, postState, postToolResult } from "@/services/api/canvas-agent";
@@ -614,6 +615,28 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             setAgentState({ models, model: current.model, reasoningEffort: nextEffort });
         }).catch((error) => addEventLog(rt("modelListFailed"), error));
     }, [connected, endpoint, setAgentState, token]);
+
+    useEffect(() => {
+        if (!connected) return;
+        void fetchAgentJson<{ ok?: boolean; data?: ChannelModel[] }>(endpoint, token, "/agent/crun/models").then(({ data = [] }) => {
+            if (!data.length) return;
+            const store = useConfigStore.getState();
+            const channel = {
+                id: "crun",
+                name: "Crun",
+                baseUrl: `${endpoint}/agent/crun`,
+                // This is only a readiness marker. CRUN_API_KEY remains on the Agent server.
+                apiKey: "server-managed",
+                apiFormat: "openai" as const,
+                models: data,
+            };
+            const channels = store.config.channels.some((item) => item.id === channel.id)
+                ? store.config.channels.map((item) => (item.id === channel.id ? channel : item))
+                : [...store.config.channels, channel];
+            store.updateConfig("channels", channels);
+            store.updateConfig("models", modelOptionsFromChannels(channels));
+        }).catch((error) => addEventLog("Crun model list", error));
+    }, [connected, endpoint, token]);
 
     useEffect(() => {
         if (!connected) return;
