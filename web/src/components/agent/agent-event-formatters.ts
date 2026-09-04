@@ -341,6 +341,7 @@ function siteToolSummary(name: string, result: unknown, input: unknown) {
     if (name === "entities_search") return `${SITE_TOOL_LABELS.entities_search} · ${numberField(data, "total")}`;
     if (name === "entities_get") return `${SITE_TOOL_LABELS.entities_get} · ${stringText(objectField(data, "name"))}`;
     if (name === "entities_add") return `${SITE_TOOL_LABELS.entities_add} · ${stringText(objectField(data, "name"))}`;
+    if (name === "entities_update") return `${SITE_TOOL_LABELS.entities_update} · ${stringText(objectField(data, "name"))}`;
     if (name === "entities_place_on_canvas") {
         const entity = objectField(data, "entity");
         return `${SITE_TOOL_LABELS.entities_place_on_canvas} · ${stringText(objectField(entity, "name"))}`;
@@ -513,7 +514,7 @@ export function formatBytes(bytes: number) {
 }
 
 export function isCanvasWriteTool(name: string) {
-    return name === "canvas_apply_ops" || name === "canvas_create_attachment_nodes" || name === "entities_place_on_canvas";
+    return name === "canvas_apply_ops" || name === "canvas_create_attachment_nodes" || name === "entities_add" || name === "entities_update" || name === "entities_place_on_canvas";
 }
 
 function parseToolArguments(value: unknown) {

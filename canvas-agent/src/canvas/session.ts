@@ -38,6 +38,7 @@ const SITE_TOOLS = new Set<ToolName>([
     "entities_search",
     "entities_get",
     "entities_add",
+    "entities_update",
     "entities_place_on_canvas",
     "generation_get_status",
 ]);

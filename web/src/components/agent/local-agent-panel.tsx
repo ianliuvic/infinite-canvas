@@ -835,7 +835,11 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             try {
                 addEventLog(toolName(payload.name), payload, payload);
                 const context = canvasContextRef.current;
-                const result = await runSiteTool(payload.name, payload.input || {}, navigate, { canvasSnapshot: context?.snapshot || null, applyOps: context?.applyOps });
+                const result = await runSiteTool(payload.name, payload.input || {}, navigate, {
+                    canvasSnapshot: context?.snapshot || null,
+                    applyOps: context?.applyOps,
+                    readAttachment: (attachmentId) => readTurnAttachment(endpoint, token, clientIdRef.current, attachmentId),
+                });
                 await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
                 addEventLog(rt("toolCompleted", { tool: toolName(payload.name) }), result, result);
             } catch (error) {
@@ -1593,6 +1597,18 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
             };
         }),
     );
+}
+
+async function readTurnAttachment(endpoint: string, token: string, clientId: string, attachmentId: string) {
+    const res = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?clientId=${encodeURIComponent(clientId)}`, {
+        credentials: "include",
+        headers: { "x-canvas-agent-token": token },
+    });
+    if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || rt("attachmentReadFailed"));
+    }
+    return await res.blob();
 }
 
 function createId() {

@@ -633,5 +633,5 @@ function safeEqual(left: string, right: string) {
 function withAttachmentContext(prompt: string, attachments: Array<{ id: string; name: string }>) {
     if (!attachments.length) return prompt;
     const list = attachments.map((item, index) => `${index + 1}. attachmentId=${item.id}, name=${JSON.stringify(item.name)}`).join("\n");
-    return `${prompt}\n\n本轮可用图片附件（顺序与图片输入一致）：\n${list}\n需要把附件放入画布或作为生成参考图时，先调用 canvas_create_attachment_nodes，再使用返回的画布节点 ID 创建生成流程。`;
+    return `${prompt}\n\n本轮可用图片附件（顺序与图片输入一致）：\n${list}\n创建人物、产品等实体资产时，把对应 attachmentId 直接传给 entities_add.attachments，工具会自动将图片持久化并加入实体成员；不要只创建文字档案。向已有实体补充图片时先用 entities_search 找到 entityId，再把 attachmentId 传给 entities_update.attachments。需要把附件直接放入画布或作为一次性生成参考图时，调用 canvas_create_attachment_nodes，再使用返回的画布节点 ID 创建生成流程。`;
 }

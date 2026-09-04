@@ -544,6 +544,7 @@ function toolHistorySummary(tool: string, item: unknown, input: unknown) {
     if (tool === "entities_search") return `找到 ${numberValue(field(result, "total"))} 个实体`;
     if (tool === "entities_get") return `已读取实体：${String(field(result, "name") || "")}`;
     if (tool === "entities_add") return `已创建实体：${String(field(result, "name") || "")}`;
+    if (tool === "entities_update") return `已更新实体：${String(field(result, "name") || "")}`;
     if (tool === "entities_place_on_canvas") return `已将实体放入画布`;
     if (tool === "generation_get_status") {
         const summary = field(result, "summary");
@@ -742,6 +743,7 @@ function toolName(name: string) {
     if (name === "entities_search") return "搜索实体资产";
     if (name === "entities_get") return "读取实体档案";
     if (name === "entities_add") return "创建实体资产";
+    if (name === "entities_update") return "更新实体资产";
     if (name === "entities_place_on_canvas") return "将实体放入画布";
     if (name === "generation_get_status") return "生成任务状态";
     return name ? `调用工具：${name}` : "工具操作";

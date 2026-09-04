@@ -45,6 +45,7 @@ export const toolNames = [
     "entities_search",
     "entities_get",
     "entities_add",
+    "entities_update",
     "entities_place_on_canvas",
 ] as const;
 export type ToolName = (typeof toolNames)[number];
@@ -141,6 +142,22 @@ export const toolInputSchemas = {
         negativePrompt: z.string().optional(),
         usageRules: z.string().optional(),
         members: z.array(z.object({ assetId: z.string(), role: z.enum(["primary", "identity", "fullBody", "detail", "expression", "outfit", "background", "product", "style", "reference"]).optional(), note: z.string().optional() })).optional(),
+        attachments: z.array(z.object({ attachmentId: z.string(), title: z.string().optional(), role: z.enum(["primary", "identity", "fullBody", "detail", "expression", "outfit", "background", "product", "style", "reference"]).optional(), note: z.string().optional() })).optional(),
+    }),
+    entities_update: z.object({
+        entityId: z.string().optional(),
+        name: z.string().optional(),
+        kind: z.enum(["person", "product", "scene", "style", "brand", "other"]).optional(),
+        aliases: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        summary: z.string().optional(),
+        description: z.string().optional(),
+        prompt: z.string().optional(),
+        negativePrompt: z.string().optional(),
+        usageRules: z.string().optional(),
+        replaceMembers: z.boolean().optional(),
+        members: z.array(z.object({ assetId: z.string(), role: z.enum(["primary", "identity", "fullBody", "detail", "expression", "outfit", "background", "product", "style", "reference"]).optional(), note: z.string().optional() })).optional(),
+        attachments: z.array(z.object({ attachmentId: z.string(), title: z.string().optional(), role: z.enum(["primary", "identity", "fullBody", "detail", "expression", "outfit", "background", "product", "style", "reference"]).optional(), note: z.string().optional() })).optional(),
     }),
     entities_place_on_canvas: z.object({ entityId: z.string().optional(), name: z.string().optional(), assetIds: z.array(z.string()).optional(), maxReferences: z.number().int().min(1).max(12).optional() }),
 } satisfies Record<ToolName, z.AnyZodObject>;
@@ -182,6 +199,7 @@ export const toolDescriptions: Record<ToolName, string> = {
     assets_add: "向「我的素材」新增素材。kind=text 时用 content 传文本内容；kind=image 时用 imageUrl 传图片地址或 dataURL。可附带 title、tags、source、note。",
     entities_search: "搜索实体资产库中的人物、产品、场景、风格或品牌。用户提到角色名、产品名或资产组时应先调用本工具；支持 keyword、kind、tags 与分页。",
     entities_get: "读取一个实体的完整档案、固定生成描述、禁用内容、使用规则和成员素材。先用 entities_search 找到 entityId，再调用本工具，不要仅凭名字猜测。",
-    entities_add: "创建实体资产，并可通过 members 关联已有单项资产。成员 assetId 可由 assets_list 获得；role 用于区分身份、全身、细节、背景、产品、风格等参考用途。",
+    entities_add: "创建实体资产。members 可通过 assets_list 返回的 assetId 关联已有单项资产；attachments 可直接把本轮聊天图片保存为单项资产并关联实体，attachmentId 使用本轮附件清单中的 ID。每项可设置 role（主参考、身份、全身、细节、表情、服装、背景、产品、风格或普通参考）和 note。用户要求用刚上传的图片创建人物/产品实体时，应把图片直接传入 attachments，不能只写文字档案。",
+    entities_update: "更新已有实体，也可把本轮聊天图片追加为实体成员。先用 entities_search 找到 entityId；attachments 直接使用本轮 attachmentId。默认保留已有成员并追加，只有用户明确要求替换全部参考素材时才设置 replaceMembers=true。",
     entities_place_on_canvas: "将实体以完整实体板放到当前视口中央：包含分组、资料卡、最多 12 个参考图片/视频节点及连线。返回 referenceNodeIds 后，可将其传入 canvas_create_generation_flow 或 canvas_generate_image；用户只要求放置时不要自动生成。",
 };

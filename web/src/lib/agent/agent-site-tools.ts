@@ -9,7 +9,7 @@ import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-age
 import { buildEntityCanvasPlacement, entitySearchText } from "@/lib/canvas/entity-canvas";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useAssetStore, type EntityAssetRole, type EntityKind } from "@/stores/use-asset-store";
+import { useAssetStore, type EntityAssetMember, type EntityAssetRole, type EntityKind } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
@@ -29,6 +29,7 @@ export const SITE_TOOL_NAMES = [
     "entities_search",
     "entities_get",
     "entities_add",
+    "entities_update",
     "entities_place_on_canvas",
 ] as const;
 
@@ -55,11 +56,16 @@ export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
     get entities_search() { return siteText("entitySearch"); },
     get entities_get() { return siteText("entityGet"); },
     get entities_add() { return siteText("entityAdd"); },
+    get entities_update() { return i18n.language.startsWith("zh") ? "更新实体资产" : "Update entity asset"; },
     get entities_place_on_canvas() { return siteText("entityPlace"); },
 };
 
 type SiteToolInput = Record<string, unknown>;
-type SiteToolContext = { canvasSnapshot?: CanvasAgentSnapshot | null; applyOps?: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot };
+type SiteToolContext = {
+    canvasSnapshot?: CanvasAgentSnapshot | null;
+    applyOps?: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot;
+    readAttachment?: (attachmentId: string) => Promise<Blob>;
+};
 type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
 type GenerationStatusItem = { id: string; source: "canvas" | "image" | "video"; status: GenerationStatus; kind?: string; title?: string; prompt?: string; projectId?: string; createdAt?: string; updatedAt?: string; successCount?: number; failCount?: number; error?: string };
 
@@ -88,7 +94,9 @@ export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navi
         case "entities_get":
             return getEntity(input);
         case "entities_add":
-            return addEntity(input);
+            return addEntity(input, context);
+        case "entities_update":
+            return updateEntity(input, context);
         case "entities_place_on_canvas":
             return placeEntity(input, context);
         default:
@@ -334,18 +342,11 @@ function getEntity(input: SiteToolInput) {
     };
 }
 
-function addEntity(input: SiteToolInput) {
+async function addEntity(input: SiteToolInput, context: SiteToolContext) {
     const name = String(input.name || "").trim();
     if (!name) throw new Error(siteText("entityNameRequired"));
     const store = useAssetStore.getState();
-    const assetIds = new Set(store.assets.map((asset) => asset.id));
-    const members = Array.isArray(input.members)
-        ? input.members.flatMap((item) => {
-              const member = item && typeof item === "object" ? item as Record<string, unknown> : {};
-              const assetId = String(member.assetId || "");
-              return assetIds.has(assetId) ? [{ assetId, role: entityRole(member.role), ...(typeof member.note === "string" ? { note: member.note } : {}) }] : [];
-          })
-        : [];
+    const { members, importedAttachmentCount } = await collectEntityMembers(input, context, name, []);
     const id = store.addEntity({
         kind: entityKind(input.kind),
         name,
@@ -358,7 +359,63 @@ function addEntity(input: SiteToolInput) {
         usageRules: String(input.usageRules || ""),
         members,
     });
-    return { ok: true, id, name, memberCount: members.length };
+    return { ok: true, id, name, memberCount: members.length, importedAttachmentCount };
+}
+
+async function updateEntity(input: SiteToolInput, context: SiteToolContext) {
+    const entity = findEntity(input);
+    if (!entity) throw new Error(siteText("entityNotFound"));
+    const baseMembers = input.replaceMembers === true ? [] : entity.members;
+    const { members, importedAttachmentCount } = await collectEntityMembers(input, context, entity.name, baseMembers);
+    const patch: Partial<Omit<typeof entity, "id" | "createdAt">> = { members };
+    if (input.kind !== undefined) patch.kind = entityKind(input.kind);
+    if (typeof input.name === "string" && input.name.trim()) patch.name = input.name.trim();
+    if (input.aliases !== undefined) patch.aliases = stringArray(input.aliases);
+    if (input.tags !== undefined) patch.tags = stringArray(input.tags);
+    if (typeof input.summary === "string") patch.summary = input.summary;
+    if (typeof input.description === "string") patch.description = input.description;
+    if (typeof input.prompt === "string") patch.prompt = input.prompt;
+    if (typeof input.negativePrompt === "string") patch.negativePrompt = input.negativePrompt;
+    if (typeof input.usageRules === "string") patch.usageRules = input.usageRules;
+    useAssetStore.getState().updateEntity(entity.id, patch);
+    return { ok: true, id: entity.id, name: patch.name || entity.name, memberCount: members.length, importedAttachmentCount, updated: true };
+}
+
+async function collectEntityMembers(input: SiteToolInput, context: SiteToolContext, entityName: string, initialMembers: EntityAssetMember[]) {
+    const store = useAssetStore.getState();
+    const validAssetIds = new Set(store.assets.map((asset) => asset.id));
+    const members = [...initialMembers];
+    if (Array.isArray(input.members)) {
+        input.members.forEach((value) => {
+            const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+            const assetId = String(item.assetId || "");
+            if (!validAssetIds.has(assetId)) return;
+            const member = { assetId, role: entityRole(item.role), ...(typeof item.note === "string" ? { note: item.note } : {}) };
+            const existingIndex = members.findIndex((current) => current.assetId === assetId);
+            if (existingIndex >= 0) members[existingIndex] = member;
+            else members.push(member);
+        });
+    }
+    const attachmentItems = Array.isArray(input.attachments) ? input.attachments : [];
+    const seenAttachmentIds = new Set<string>();
+    for (const [index, value] of attachmentItems.entries()) {
+        const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+        const attachmentId = String(item.attachmentId || "").trim();
+        if (!attachmentId || seenAttachmentIds.has(attachmentId)) continue;
+        if (!context.readAttachment) throw new Error(siteText("attachmentImportUnavailable"));
+        seenAttachmentIds.add(attachmentId);
+        let image;
+        try {
+            image = await uploadImage(await context.readAttachment(attachmentId));
+        } catch {
+            throw new Error(siteText("attachmentImportFailed", { attachmentId }));
+        }
+        const role: EntityAssetRole = item.role ? entityRole(item.role) : members.length ? "reference" : "primary";
+        const title = String(item.title || "").trim() || `${entityName} · ${role === "primary" ? siteText("primaryReference") : siteText("referenceImage")} ${index + 1}`;
+        const assetId = store.addAsset({ kind: "image", title, coverUrl: image.url, tags: stringArray(input.tags), source: siteText("entityAttachmentSource"), note: typeof item.note === "string" ? item.note : undefined, data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } });
+        members.push({ assetId, role, ...(typeof item.note === "string" ? { note: item.note } : {}) });
+    }
+    return { members, importedAttachmentCount: seenAttachmentIds.size };
 }
 
 function placeEntity(input: SiteToolInput, context: SiteToolContext) {
