@@ -191,7 +191,7 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
     setFirst(input, accepts, ["prompt", "text", "description"], source.prompt);
 
     const urls = (kind: string) => source.media.filter((item) => item.kind === kind).map((item) => item.url);
-    setMedia(input, properties, accepts, ["images", "image_urls", "reference_images", "reference_image_urls"], ["image", "image_url", "input_image", "reference_image"], urls("image"));
+    setMedia(input, properties, accepts, ["images", "img_urls", "image_urls", "reference_images", "reference_image_urls"], ["image", "img_url", "image_url", "input_image", "reference_image"], urls("image"));
     setMedia(input, properties, accepts, ["videos", "video_urls", "reference_videos"], ["video", "video_url", "input_video", "reference_video"], urls("video"));
     setMedia(input, properties, accepts, ["audios", "audio_urls", "reference_audios"], ["audio", "audio_url", "input_audio", "reference_audio"], urls("audio"));
 
@@ -199,9 +199,11 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
     const dimensions = parseDimensions(size);
     const ratio = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(size) ? size : dimensions ? simplifyRatio(dimensions.width, dimensions.height) : "";
     const quality = String(source.params.quality || "").toLowerCase();
-    const resolution = /^\d+k$/i.test(quality)
-        ? quality.toUpperCase()
-        : ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[quality] || String(source.params.resolution || "");
+    const resolution = dimensions
+        ? dimensionsToResolution(dimensions.width, dimensions.height)
+        : /^\d+k$/i.test(quality)
+          ? quality.toUpperCase()
+          : ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[quality] || String(source.params.resolution || "");
     setFirst(input, accepts, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], enumCompatibleValue(properties, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], ratio));
     setFirst(input, accepts, ["resolution", "image_size", "imageSize", "output_resolution"], enumCompatibleValue(properties, ["resolution", "image_size", "imageSize", "output_resolution"], resolution));
     if (dimensions) {
@@ -209,7 +211,7 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
         setFirst(input, accepts, ["height"], dimensions.height);
         setFirst(input, accepts, ["size"], `${dimensions.width}x${dimensions.height}`);
     }
-    setFirst(input, accepts, ["quality"], quality === "auto" ? undefined : quality);
+    setFirst(input, accepts, ["quality"], enumCompatibleValue(properties, ["quality"], quality === "auto" ? "" : quality));
     setFirst(input, accepts, ["duration", "seconds"], source.params.seconds);
     setFirst(input, accepts, ["generate_audio", "with_audio"], source.params.generateAudio);
     setFirst(input, accepts, ["watermark", "add_watermark"], source.params.watermark);
@@ -248,6 +250,13 @@ function parseDimensions(value: string) {
 function simplifyRatio(width: number, height: number) {
     const divisor = greatestCommonDivisor(width, height);
     return `${width / divisor}:${height / divisor}`;
+}
+
+function dimensionsToResolution(width: number, height: number) {
+    const edge = Math.max(width, height);
+    if (edge > 2048) return "4K";
+    if (edge > 1024) return "2K";
+    return "1K";
 }
 
 function greatestCommonDivisor(left: number, right: number): number {
