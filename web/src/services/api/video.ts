@@ -113,6 +113,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
                 mode: resolveVideoMode(config.videoMode, refs.length),
+                providerMode: config.videoProviderMode,
             },
             signal: options?.signal,
         }),
@@ -326,7 +327,7 @@ function normalizeVideoResolution(value: string) {
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
     const resolution = value.replace(/p$/i, "") || "720";
-    return `${resolution}p`;
+    return /^\d+k$/i.test(resolution) ? resolution : `${resolution}p`;
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {

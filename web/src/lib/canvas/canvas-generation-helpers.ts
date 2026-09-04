@@ -106,6 +106,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,
+        videoProviderMode: node?.metadata?.videoProviderMode ?? config.videoProviderMode ?? defaultConfig.videoProviderMode,
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,

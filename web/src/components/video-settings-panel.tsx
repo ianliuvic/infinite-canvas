@@ -1,12 +1,12 @@
-import { type ReactNode } from "react";
-import { Slider } from "antd";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Slider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
-import { type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "480", label: "480p" },
@@ -24,19 +24,28 @@ export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MA
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
+    model?: string;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoProviderMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, model, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
-    const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
+    const crunSettings = useCrunVideoSettings(config, model);
+    const seconds = normalizeDuration(config.videoSeconds || "6", crunSettings);
     const videoMode = normalizeVideoModeValue(config.videoMode);
-    const resolution = parseVideoResolution(config.vquality);
+    const resolution = normalizeResolutionOption(config.vquality);
     const selectedRatio = inferVideoRatio(config.size || "auto");
-    const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
+    const dimensions = readVideoDimensions(config.size || "auto", parseVideoResolution(resolution), selectedRatio);
+    const availableResolutions = crunSettings?.resolutions.length ? crunSettings.resolutions : resolutionOptions.map((item) => item.value);
+    const availableRatios = crunSettings?.ratios.length ? crunSettings.ratios.map(toRatioOption).filter((item): item is { value: string; width: number; height: number } => Boolean(item)) : [...videoRatioOptions];
+    const showResolution = !crunSettings || crunSettings.fields.has("resolution");
+    const showDimensions = !crunSettings || crunSettings.fields.has("size") || (crunSettings.fields.has("width") && crunSettings.fields.has("height"));
+    const showRatio = !crunSettings || crunSettings.fields.has("ratio");
+    const showAudio = !crunSettings || crunSettings.fields.has("audio");
+    const showWatermark = !crunSettings || crunSettings.fields.has("watermark");
     const applySize = (nextResolution: string, ratio: string) => {
         onConfigChange("vquality", nextResolution);
         onConfigChange("size", computeVideoSize(nextResolution, ratio));
@@ -50,26 +59,26 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
-                <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
+                {showResolution ? <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
-                                {item.label}
+                        {availableResolutions.map((value) => (
+                            <OptionPill key={value} selected={resolution.toLowerCase() === value.toLowerCase()} theme={theme} onClick={() => selectResolution(value)}>
+                                {resolutionLabel(value)}
                             </OptionPill>
                         ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
+                        {!crunSettings ? <ResolutionInput value={parseVideoResolution(resolution)} theme={theme} onChange={selectResolution} /> : null}
                     </div>
-                </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
+                </SettingGroup> : null}
+                {showDimensions ? <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
                         <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
                         <span className="text-lg opacity-45">↔</span>
                         <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
                     </div>
-                </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
+                </SettingGroup> : null}
+                {showRatio ? <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {videoRatioOptions.map((item) => (
+                        {availableRatios.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -83,15 +92,17 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </button>
                         ))}
                     </div>
-                </SettingGroup>
+                </SettingGroup> : null}
                 <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
-                    <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
-                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={VIDEO_SECONDS_MAX} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
-                        <SecondsInput value={seconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
+                    {crunSettings?.durations.length ? <div className="grid grid-cols-4 gap-2.5">
+                        {crunSettings.durations.map((value) => <OptionPill key={value} selected={seconds === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}
+                    </div> : <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
+                        <Slider className="min-w-0 flex-1" min={crunSettings?.durationMin ?? VIDEO_SECONDS_MIN} max={crunSettings?.durationMax ?? VIDEO_SECONDS_MAX} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
+                        <SecondsInput value={seconds} min={crunSettings?.durationMin ?? VIDEO_SECONDS_MIN} max={crunSettings?.durationMax ?? VIDEO_SECONDS_MAX} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
                         <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
-                    </div>
+                    </div>}
                 </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
+                {!crunSettings ? <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-2.5">
                         {videoModeOptions.map((item) => (
                             <OptionPill key={item.value} selected={videoMode === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
@@ -99,14 +110,21 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                     </div>
-                </SettingGroup>
+                </SettingGroup> : null}
+                {crunSettings?.providerModes.length ? <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {crunSettings.providerModes.map((value) => <OptionPill key={value} selected={(config.videoProviderMode || crunSettings.providerModeDefault) === value} theme={theme} onClick={() => onConfigChange("videoProviderMode", value)}>{value}</OptionPill>)}
+                    </div>
+                </SettingGroup> : null}
+                {showAudio ? <BooleanSetting title={t("settingsPanels.video.generateAudio")} value={config.videoGenerateAudio !== "false"} theme={theme} onChange={(value) => onConfigChange("videoGenerateAudio", String(value))} /> : null}
+                {showWatermark ? <BooleanSetting title={t("settingsPanels.video.watermark")} value={config.videoWatermark === "true"} theme={theme} onChange={(value) => onConfigChange("videoWatermark", String(value))} /> : null}
             </div>
         </ImageSettingsTheme>
     );
 }
 
 export function videoResolutionLabel(value: string) {
-    return `${parseVideoResolution(value)}p`;
+    return resolutionLabel(normalizeResolutionOption(value));
 }
 
 export function videoSizeLabel(value: string) {
@@ -173,9 +191,9 @@ function ResolutionInput({ value, theme, onChange }: { value: string; theme: Can
     );
 }
 
-function SecondsInput({ value, theme, onCommit }: { value: number; theme: CanvasTheme; onCommit: (value: number) => void }) {
+function SecondsInput({ value, min, max, theme, onCommit }: { value: number; min: number; max: number; theme: CanvasTheme; onCommit: (value: number) => void }) {
     const commit = (input: HTMLInputElement) => {
-        const next = Number(clampVideoSeconds(input.value));
+        const next = Math.max(min, Math.min(max, Math.floor(Number(input.value) || value)));
         input.value = String(next);
         onCommit(next);
     };
@@ -184,8 +202,8 @@ function SecondsInput({ value, theme, onCommit }: { value: number; theme: Canvas
         <label className="flex h-9 w-[68px] shrink-0 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
             <input
                 type="number"
-                min={VIDEO_SECONDS_MIN}
-                max={VIDEO_SECONDS_MAX}
+                min={min}
+                max={max}
                 className="min-w-0 flex-1 bg-transparent px-2 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 defaultValue={value}
                 key={value}
@@ -197,6 +215,107 @@ function SecondsInput({ value, theme, onCommit }: { value: number; theme: Canvas
             />
         </label>
     );
+}
+
+type CrunVideoField = "resolution" | "ratio" | "duration" | "audio" | "watermark" | "size" | "width" | "height";
+type CrunVideoSettings = { fields: Set<CrunVideoField>; resolutions: string[]; ratios: string[]; durations: number[]; durationMin?: number; durationMax?: number; providerModes: string[]; providerModeDefault: string };
+
+function useCrunVideoSettings(config: AiConfig, explicitModel?: string) {
+    const selectedModel = explicitModel || config.model || config.videoModel;
+    const channel = resolveModelChannel(config, selectedModel);
+    const isCrun = channel.id === "crun";
+    const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
+    useEffect(() => {
+        setSchema(null);
+        if (!isCrun) return;
+        const controller = new AbortController();
+        const url = `${channel.baseUrl.replace(/\/+$/, "")}/v1/schema?model=${encodeURIComponent(modelOptionName(selectedModel))}`;
+        void fetch(url, { credentials: "include", signal: controller.signal }).then(async (response) => {
+            const data = await response.json() as { schema?: Record<string, unknown>; error?: string };
+            if (!response.ok || !data.schema) throw new Error(data.error || "Failed to read Crun model schema");
+            setSchema(data.schema);
+        }).catch((error) => {
+            if (error instanceof DOMException && error.name === "AbortError") return;
+            setSchema(null);
+        });
+        return () => controller.abort();
+    }, [channel.baseUrl, isCrun, selectedModel]);
+    return useMemo(() => isCrun && schema ? parseCrunVideoSettings(schema) : null, [isCrun, schema]);
+}
+
+function parseCrunVideoSettings(schema: Record<string, unknown>): CrunVideoSettings {
+    const properties = schema.properties && typeof schema.properties === "object" ? schema.properties as Record<string, Record<string, unknown>> : {};
+    const fields = new Set<CrunVideoField>();
+    const resolution = findSchemaProperty(properties, ["resolution", "output_resolution"]);
+    const ratio = findSchemaProperty(properties, ["aspect_ratio", "aspectRatio", "ratio"]);
+    const duration = findSchemaProperty(properties, ["duration", "seconds"]);
+    if (resolution) fields.add("resolution");
+    if (ratio) fields.add("ratio");
+    if (duration) fields.add("duration");
+    if (findSchemaProperty(properties, ["audio", "generate_audio", "with_audio"])) fields.add("audio");
+    if (findSchemaProperty(properties, ["watermark", "add_watermark", "enable_watermark"])) fields.add("watermark");
+    for (const field of ["size", "width", "height"] as const) if (properties[field]) fields.add(field);
+    const durationValues = schemaEnum(duration).map(Number).filter(Number.isFinite);
+    const providerMode = properties.mode;
+    return {
+        fields,
+        resolutions: schemaEnum(resolution).map(String),
+        ratios: schemaEnum(ratio).map(String),
+        durations: durationValues,
+        durationMin: finiteNumber(duration?.minimum ?? duration?.min),
+        durationMax: finiteNumber(duration?.maximum ?? duration?.max),
+        providerModes: schemaEnum(providerMode).map(String),
+        providerModeDefault: typeof providerMode?.default === "string" ? providerMode.default : "",
+    };
+}
+
+function findSchemaProperty(properties: Record<string, Record<string, unknown>>, names: string[]) {
+    return names.map((name) => properties[name]).find(Boolean);
+}
+
+function schemaEnum(definition: Record<string, unknown> | undefined): Array<string | number> {
+    if (!definition) return [];
+    if (Array.isArray(definition.enum)) return definition.enum.filter((value): value is string | number => typeof value === "string" || typeof value === "number");
+    for (const key of ["oneOf", "anyOf"]) {
+        const choices = definition[key];
+        if (!Array.isArray(choices)) continue;
+        const values = choices.flatMap((choice) => choice && typeof choice === "object" ? schemaEnum(choice as Record<string, unknown>) : []);
+        if (values.length) return values;
+    }
+    return [];
+}
+
+function normalizeDuration(value: string, settings: CrunVideoSettings | null) {
+    const numeric = Math.floor(Number(value) || 6);
+    if (settings?.durations.length) return settings.durations.reduce((best, item) => Math.abs(item - numeric) < Math.abs(best - numeric) ? item : best);
+    const min = settings?.durationMin ?? VIDEO_SECONDS_MIN;
+    const max = settings?.durationMax ?? VIDEO_SECONDS_MAX;
+    return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizeResolutionOption(value: string) {
+    const raw = String(value || "720").trim();
+    return /^\d+k$/i.test(raw) ? raw : parseVideoResolution(raw);
+}
+
+function resolutionLabel(value: string) {
+    return /^\d+k$/i.test(value) ? value.toUpperCase() : /p$/i.test(value) ? value : `${value}p`;
+}
+
+function toRatioOption(value: string) {
+    if (value === "auto") return { value, width: 0, height: 0 };
+    const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(value);
+    if (!match) return null;
+    return { value, width: Number(match[1]), height: Number(match[2]) };
+}
+
+function finiteNumber(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : undefined;
+}
+
+function BooleanSetting({ title, value, theme, onChange }: { title: string; value: boolean; theme: CanvasTheme; onChange: (value: boolean) => void }) {
+    return <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>{title}</span><span onMouseDown={(event) => event.stopPropagation()}><Switch size="small" checked={value} onChange={onChange} /></span></div>;
 }
 
 function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {

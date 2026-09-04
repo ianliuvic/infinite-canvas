@@ -192,29 +192,39 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
 
     const urls = (kind: string) => source.media.filter((item) => item.kind === kind).map((item) => item.url);
     setMedia(input, properties, accepts, ["images", "img_urls", "image_urls", "reference_images", "reference_image_urls"], ["image", "img_url", "image_url", "input_image", "reference_image"], urls("image"));
-    setMedia(input, properties, accepts, ["videos", "video_urls", "reference_videos"], ["video", "video_url", "input_video", "reference_video"], urls("video"));
+    setMedia(input, properties, accepts, ["videos", "video_list", "video_urls", "reference_videos"], ["video", "video_url", "input_video", "reference_video"], urls("video"));
     setMedia(input, properties, accepts, ["audios", "audio_urls", "reference_audios"], ["audio", "audio_url", "input_audio", "reference_audio"], urls("audio"));
 
     const size = String(source.params.size || "");
     const dimensions = parseDimensions(size);
-    const ratio = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(size) ? size : dimensions ? simplifyRatio(dimensions.width, dimensions.height) : "";
+    const explicitRatio = String(source.params.ratio || "");
+    const ratio = /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(explicitRatio)
+        ? explicitRatio
+        : /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(size)
+          ? size
+          : dimensions
+            ? simplifyRatio(dimensions.width, dimensions.height)
+            : "";
     const quality = String(source.params.quality || "").toLowerCase();
-    const resolution = dimensions
-        ? dimensionsToResolution(dimensions.width, dimensions.height)
-        : /^\d+k$/i.test(quality)
-          ? quality.toUpperCase()
-          : ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[quality] || String(source.params.resolution || "");
+    const resolution = source.capability === "video"
+        ? String(source.params.resolution || "")
+        : dimensions
+          ? dimensionsToResolution(dimensions.width, dimensions.height)
+          : /^\d+k$/i.test(quality)
+            ? quality.toUpperCase()
+            : ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[quality] || String(source.params.resolution || "");
     setFirst(input, accepts, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], enumCompatibleValue(properties, ["aspect_ratio", "aspectRatio", "ratio", "image_aspect_ratio"], ratio));
     setFirst(input, accepts, ["resolution", "image_size", "imageSize", "output_resolution"], enumCompatibleValue(properties, ["resolution", "image_size", "imageSize", "output_resolution"], resolution));
-    if (dimensions) {
+    if (dimensions && source.capability !== "video") {
         setFirst(input, accepts, ["width"], dimensions.width);
         setFirst(input, accepts, ["height"], dimensions.height);
         setFirst(input, accepts, ["size"], `${dimensions.width}x${dimensions.height}`);
     }
     setFirst(input, accepts, ["quality"], enumCompatibleValue(properties, ["quality"], quality === "auto" ? "" : quality));
-    setFirst(input, accepts, ["duration", "seconds"], source.params.seconds);
-    setFirst(input, accepts, ["generate_audio", "with_audio"], source.params.generateAudio);
-    setFirst(input, accepts, ["watermark", "add_watermark"], source.params.watermark);
+    setFirst(input, accepts, ["duration", "seconds"], schemaCompatibleValue(properties, ["duration", "seconds"], source.params.seconds));
+    setFirst(input, accepts, ["audio", "generate_audio", "with_audio"], source.params.generateAudio);
+    setFirst(input, accepts, ["watermark", "add_watermark", "enable_watermark"], source.params.watermark);
+    setFirst(input, accepts, ["mode"], enumCompatibleValue(properties, ["mode"], String(source.params.providerMode || "")));
 
     for (const [key, definition] of Object.entries(properties)) {
         if (input[key] !== undefined || definition.default === undefined) continue;
@@ -231,7 +241,9 @@ function setFirst(target: Record<string, unknown>, accepts: (name: string) => bo
 
 function setMedia(target: Record<string, unknown>, properties: Record<string, Record<string, unknown>>, accepts: (name: string) => boolean, arrayNames: string[], scalarNames: string[], values: string[]) {
     if (!values.length) return;
-    const arrayName = arrayNames.find((name) => accepts(name) && (properties[name]?.type === "array" || !Object.keys(properties).length));
+    // Some Crun schemas omit `type: array` on plural media fields; the field name is
+    // still authoritative and the API expects a list.
+    const arrayName = arrayNames.find((name) => accepts(name));
     if (arrayName) target[arrayName] = values;
     else {
         const scalarName = scalarNames.find(accepts);
@@ -286,6 +298,27 @@ function enumCompatibleValue(properties: Record<string, Record<string, unknown>>
         }, undefined);
     }
     return undefined;
+}
+
+function schemaCompatibleValue(properties: Record<string, Record<string, unknown>>, names: string[], value: unknown) {
+    if (value === undefined || value === null || value === "") return undefined;
+    const definition = names.map((name) => properties[name]).find(Boolean);
+    const enumValues = Array.isArray(definition?.enum) ? definition.enum.filter((item) => typeof item === "string" || typeof item === "number") as Array<string | number> : [];
+    const numericValue = Number(value);
+    if (enumValues.length) {
+        const exact = enumValues.find((item) => String(item).toLowerCase() === String(value).toLowerCase());
+        if (exact !== undefined) return exact;
+        const numeric = enumValues.filter((item): item is number => typeof item === "number" || !Number.isNaN(Number(item))).map(Number);
+        if (numeric.length && Number.isFinite(numericValue)) return numeric.reduce((best, item) => Math.abs(item - numericValue) < Math.abs(best - numericValue) ? item : best);
+        return undefined;
+    }
+    if (Number.isFinite(numericValue)) {
+        const minimum = Number(definition?.minimum ?? definition?.min);
+        const maximum = Number(definition?.maximum ?? definition?.max);
+        const clamped = Math.max(Number.isFinite(minimum) ? minimum : numericValue, Math.min(Number.isFinite(maximum) ? maximum : numericValue, numericValue));
+        return Number.isInteger(numericValue) ? Math.round(clamped) : clamped;
+    }
+    return value;
 }
 
 function modelPath(model: string) {
