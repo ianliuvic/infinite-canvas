@@ -21,7 +21,8 @@ import { useShallow } from "zustand/react/shallow";
 import { useAgentStore, type AgentAttachment, type AgentBootstrapStatus, type AgentCanvasContext, type AgentCanvasReference, type AgentChatItem, type AgentConversationState, type AgentModel, type AgentPendingApproval, type AgentPendingToolCall, type AgentPermissionMode, type AgentReasoningEffort, type AgentThreadSummary } from "@/stores/use-agent-store";
 import { type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool } from "@/lib/agent/agent-site-tools";
-import { acknowledgeCodexHistory, activateAgentClient, AgentApiError, discoverAgentConfig, fetchAgentJson, interruptCodexTurn, postCodexApproval, postState, postToolResult } from "@/services/api/canvas-agent";
+import { acknowledgeCodexHistory, activateAgentClient, AgentApiError, discoverAgentConfig, establishAgentSession, fetchAgentJson, interruptCodexTurn, postCodexApproval, postState, postToolResult } from "@/services/api/canvas-agent";
+import { CANVAS_AGENT_URL } from "@/constant/runtime-config";
 import { AgentChatTimeline, AgentTaskProgress, AgentUsageBar } from "./agent-chat";
 import { AgentChatComposer } from "./agent-chat-composer";
 import { AgentConnectView } from "./agent-connect-view";
@@ -71,7 +72,7 @@ const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
 const MESSAGE_PREVIEW_LONG_EDGE = 192;
 const MESSAGE_PREVIEW_MAX_LENGTH = 500_000;
-const DEFAULT_AGENT_URL = "http://127.0.0.1:17371";
+const DEFAULT_AGENT_URL = CANVAS_AGENT_URL;
 const AGENT_PROTOCOL_VERSION = 6;
 const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
 const AGENT_REASONING_EFFORTS = new Set<AgentReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -342,7 +343,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     useEffect(() => {
         if (!clientReady || !enabled || !token.trim()) return;
         localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        sessionStorage.setItem("canvas-agent-token", token);
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;
@@ -355,7 +356,9 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (isCurrentConnection()) addEventLog(rt("conversationSyncFailed"), error);
             });
         };
-        const source = new EventSource(`${endpoint}/events?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`);
+        const localEndpoint = /^(?:http:\/\/)?(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(endpoint);
+        const eventUrl = `${endpoint}/events?clientId=${encodeURIComponent(clientId)}${localEndpoint ? `&token=${encodeURIComponent(token)}` : ""}`;
+        const source = new EventSource(eventUrl, { withCredentials: true });
         source.addEventListener("hello", (event) => {
             if (!isCurrentConnection()) return;
             const hello = parseEventData<AgentHelloEvent>(event);
@@ -941,6 +944,16 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             }
             return;
         }
+        try {
+            await establishAgentSession(nextEndpoint, nextToken);
+        } catch (error) {
+            const text = error instanceof Error ? error.message : rt("connectionFailedDescription");
+            if (!silent) {
+                setAgentState({ connectError: text });
+                if (!headless) message.error(text);
+            }
+            return;
+        }
         errorLoggedRef.current = false;
         setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, fragmentBootstrap: false, activity: rt("connecting"), connectError: "", activeTab: "setup" });
     };
@@ -963,7 +976,13 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             return;
         }
         errorLoggedRef.current = false;
-        setAgentState({ url: bootstrap.url.replace(/\/$/, ""), token: bootstrap.token, enabled: true, connected: false, silentConnect: true, fragmentBootstrap: true, confirmTools: false, activity: rt("connecting"), connectError: "", activeTab: "setup" });
+        const bootstrapEndpoint = bootstrap.url.replace(/\/$/, "");
+        void establishAgentSession(bootstrapEndpoint, bootstrap.token).then(() => {
+            setAgentState({ url: bootstrapEndpoint, token: bootstrap.token, enabled: true, connected: false, silentConnect: true, fragmentBootstrap: true, confirmTools: false, activity: rt("connecting"), connectError: "", activeTab: "setup" });
+        }).catch((error) => {
+            setAgentState({ fragmentBootstrap: false, activeTab: "setup", connectError: error instanceof Error ? error.message : rt("connectionFailedDescription") });
+            useAgentStore.getState().openPanel();
+        });
     }, [hash, navigate, setAgentState]);
 
     useEffect(() => {
@@ -1525,7 +1544,10 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
             const id = String(item.id || "");
             const attachmentId = String(item.attachmentId || "");
             if (!id || !attachmentId) throw new Error(rt("invalidAttachmentNode"));
-            const res = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`);
+            const res = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?clientId=${encodeURIComponent(clientId)}`, {
+                credentials: "include",
+                headers: { "x-canvas-agent-token": token },
+            });
             if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { error?: string } | null;
                 throw new Error(body?.error || rt("attachmentReadFailed"));

@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 
 export const DEFAULT_PORT = 17371;
-export const CONFIG_DIR = path.join(os.homedir(), ".infinite-canvas");
+export const CONFIG_DIR = process.env.CANVAS_AGENT_CONFIG_DIR
+    ? path.resolve(process.env.CANVAS_AGENT_CONFIG_DIR)
+    : path.join(os.homedir(), ".infinite-canvas");
 export const CONFIG_FILE = path.join(CONFIG_DIR, "canvas-agent.json");
 export const VERSION = readPackageVersion();
 export const AGENT_PROMPT = fs.readFileSync(new URL("../agent-instructions.md", import.meta.url), "utf8");
@@ -15,13 +17,24 @@ export type CanvasAgentConfig = { url: string; token: string; origins?: string[]
 
 /** 读取本地 Canvas Agent 配置，不存在时生成默认配置。 */
 export function loadConfig(create = false): CanvasAgentConfig {
+    let stored: CanvasAgentConfig | undefined;
     try {
-        return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) as CanvasAgentConfig;
-    } catch {
-        const config = { url: `http://127.0.0.1:${Number(process.env.PORT) || DEFAULT_PORT}`, token: crypto.randomBytes(18).toString("hex") };
-        if (create) saveConfig(config);
-        return config;
-    }
+        stored = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) as CanvasAgentConfig;
+    } catch {}
+    const envOrigins = String(process.env.CANVAS_AGENT_ALLOWED_ORIGINS || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    const config: CanvasAgentConfig = {
+        url: String(process.env.CANVAS_AGENT_PUBLIC_URL || stored?.url || `http://127.0.0.1:${Number(process.env.PORT) || DEFAULT_PORT}`).replace(/\/$/, ""),
+        token: String(process.env.CANVAS_AGENT_TOKEN || stored?.token || crypto.randomBytes(18).toString("hex")),
+        origins: envOrigins.length ? envOrigins : stored?.origins,
+        workspace: stored?.workspace,
+    };
+    const workspacePath = String(process.env.CANVAS_AGENT_WORKSPACE || "").trim();
+    if (workspacePath) config.workspace = { ...config.workspace, workspacePath };
+    if (create) saveConfig(config);
+    return config;
 }
 
 /** 将 Canvas Agent 配置写入用户配置目录。 */

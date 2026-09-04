@@ -3,6 +3,7 @@ import i18n from "@/i18n";
 
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { CANVAS_AGENT_URL } from "@/constant/runtime-config";
 
 export type AgentChatRole = "user" | "assistant" | "system" | "tool" | "error";
 export type AgentAttachment = { id: string; name: string; type: string; size: number; width: number; height: number; url: string; dataUrl: string };
@@ -101,8 +102,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     panelMounted: true,
     panelClosing: false,
     canvasContext: null,
-    url: typeof window === "undefined" ? "http://127.0.0.1:17371" : localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371",
-    token: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-token") || "",
+    url: typeof window === "undefined" ? CANVAS_AGENT_URL : localStorage.getItem("canvas-agent-url") || CANVAS_AGENT_URL,
+    token: typeof window === "undefined" ? "" : sessionStorage.getItem("canvas-agent-token") || "",
     connected: false,
     enabled: false,
     silentConnect: false,
@@ -156,7 +157,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             return set({ connectError: silent ? "" : i18n.t("agent.state.invalidUrl") });
         }
         localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        sessionStorage.setItem("canvas-agent-token", token);
         // Only set enabled here; LocalAgentPanel's effect owns SSE initialization.
         set({ url: endpoint, token, enabled: true, silentConnect: silent, fragmentBootstrap: false, activity: i18n.t("agent.status.connecting"), connectError: "" });
     },

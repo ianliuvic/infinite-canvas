@@ -805,7 +805,7 @@ function skillDraftThreadSettings(cwd: string) {
 function turnSettings(permissionMode: AgentPermissionMode) {
     return {
         approvalPolicy: permissionMode === "full" ? "never" as const : "on-request" as const,
-        sandboxPolicy: permissionMode === "full" ? { type: "dangerFullAccess" as const } : { type: "workspaceWrite" as const, networkAccess: false },
+        sandboxPolicy: permissionMode === "full" ? { type: "dangerFullAccess" as const } : { type: "workspaceWrite" as const, networkAccess: true },
     };
 }
 

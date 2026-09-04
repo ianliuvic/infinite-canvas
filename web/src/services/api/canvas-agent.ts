@@ -43,11 +43,11 @@ export type AgentSkillDraftResponse = { ok?: boolean; data?: AgentSkillDraft };
 
 export async function postState(endpoint: string, token: string, clientId: string, snapshot: CanvasAgentSnapshot | null) {
     try {
-        const response = await fetch(`${endpoint}/canvas/state?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, {
+        const response = await fetch(`${endpoint}/canvas/state?clientId=${encodeURIComponent(clientId)}`, withAgentAuth(token, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(snapshot ? { ...snapshot, hasCanvas: true } : { hasCanvas: false }),
-        });
+        }));
         return response.ok;
     } catch {
         return false;
@@ -56,7 +56,7 @@ export async function postState(endpoint: string, token: string, clientId: strin
 
 export async function activateAgentClient(endpoint: string, token: string, clientId: string) {
     try {
-        await fetch(`${endpoint}/canvas/activate?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST" });
+        await fetch(`${endpoint}/canvas/activate?clientId=${encodeURIComponent(clientId)}`, withAgentAuth(token, { method: "POST" }));
     } catch {}
 }
 
@@ -116,11 +116,21 @@ export function setCodexSkillEnabled(endpoint: string, token: string, skill: Pic
 }
 
 export async function fetchAgentJson<T>(endpoint: string, token: string, path: string, init?: RequestInit) {
-    const url = `${endpoint}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-    const res = await fetch(url, init);
+    const res = await fetch(`${endpoint}${path}`, withAgentAuth(token, init));
     const data = (await res.json().catch(() => ({}))) as T & { error?: string; msg?: string };
     if (!res.ok) throw new AgentApiError(res.status, data);
     return data;
+}
+
+export async function establishAgentSession(endpoint: string, token: string) {
+    const res = await fetch(`${endpoint}/session`, withAgentAuth(token, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) }));
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})) as { error?: string }).error || i18n.t("agent.state.connectionFailedDescription"));
+}
+
+function withAgentAuth(token: string, init: RequestInit = {}): RequestInit {
+    const headers = new Headers(init.headers);
+    if (token) headers.set("x-canvas-agent-token", token);
+    return { ...init, headers, credentials: "include" };
 }
 
 export async function discoverAgentConfig(endpoint: string) {

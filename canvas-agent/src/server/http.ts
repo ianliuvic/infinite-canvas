@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -18,7 +19,8 @@ import { SkillStore, SkillStoreError } from "../skills/store.js";
 export function startHttpServer() {
     const config = loadConfig(true);
     const port = Number(process.env.PORT) || Number(new URL(config.url).port) || DEFAULT_PORT;
-    config.url = `http://127.0.0.1:${port}`;
+    const host = String(process.env.CANVAS_AGENT_HOST || "127.0.0.1").trim() || "127.0.0.1";
+    config.url = String(process.env.CANVAS_AGENT_PUBLIC_URL || config.url || `http://${host}:${port}`).replace(/\/$/, "");
     saveConfig(config);
 
     const initialWorkspace = ensureSiteWorkspace(config);
@@ -122,6 +124,19 @@ export function startHttpServer() {
     });
     app.get("/health", (_req, res) => res.json(session.health()));
     app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true }));
+    app.post("/session", (req, res) => {
+        const supplied = String(req.headers["x-canvas-agent-token"] || req.body?.token || "");
+        if (!safeEqual(supplied, config.token)) return void res.status(401).json({ ok: false, error: "invalid token" });
+        const cookiePath = new URL(config.url).pathname.replace(/\/$/, "") || "/";
+        res.cookie("canvas_agent_session", sessionCookie(config.token), {
+            httpOnly: true,
+            secure: new URL(config.url).protocol === "https:",
+            sameSite: "none",
+            path: cookiePath,
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+        res.json({ ok: true });
+    });
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
@@ -431,10 +446,10 @@ export function startHttpServer() {
         res.status(500).json({ ok: false, error: error.message });
     });
 
-    app.listen(port, "127.0.0.1", () => {
+    app.listen(port, host, () => {
         console.log("Infinite Canvas Agent");
         checkVersions();
-        console.log(`Local URL: ${config.url}`);
+        console.log(`Agent URL: ${config.url}`);
         console.log(`Connect token: ${config.token}`);
         console.log("Codex MCP is not installed by this command.");
         console.log("Optional MCP add: codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp");
@@ -520,11 +535,13 @@ function requestUrl(req: Request, config: CanvasAgentConfig) {
 /** 设置跨域响应头并记录通过 token 授权的来源。 */
 function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfig) {
     const origin = req.headers.origin;
-    res.setHeader("Access-Control-Allow-Origin", origin || "*");
-    res.setHeader("Access-Control-Allow-Headers", "content-type,x-canvas-agent-token");
+    if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Headers", "authorization,content-type,x-canvas-agent-token");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Private-Network", "true");
-    if (!origin || req.method === "OPTIONS" || url.pathname === "/health" || url.pathname === "/config") return true;
+    if (!origin || url.pathname === "/health" || url.pathname === "/config") return true;
+    if (req.method === "OPTIONS") return !config.origins?.length || config.origins.includes(origin);
     config.origins ||= [];
     if (validToken(req, url, config.token) && !config.origins.includes(origin)) {
         config.origins.push(origin);
@@ -537,7 +554,22 @@ function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfi
 /** 校验请求查询参数或请求头中的连接 token。 */
 function validToken(req: Request, url: URL, token: string) {
     const header = req.headers["x-canvas-agent-token"];
-    return url.searchParams.get("token") === token || header === token || (Array.isArray(header) && header.includes(token));
+    const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    const cookie = String(req.headers.cookie || "").split(";").map((item) => item.trim()).find((item) => item.startsWith("canvas_agent_session="))?.slice("canvas_agent_session=".length) || "";
+    return safeEqual(url.searchParams.get("token") || "", token)
+        || safeEqual(String(Array.isArray(header) ? header[0] || "" : header || ""), token)
+        || safeEqual(bearer, token)
+        || safeEqual(cookie, sessionCookie(token));
+}
+
+function sessionCookie(token: string) {
+    return crypto.createHmac("sha256", token).update("infinite-canvas-session-v1").digest("hex");
+}
+
+function safeEqual(left: string, right: string) {
+    const a = Buffer.from(left);
+    const b = Buffer.from(right);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /** 向 Agent 提示词追加本轮图片附件引用说明。 */
