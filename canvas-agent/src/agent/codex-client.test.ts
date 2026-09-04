@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodexAppClient } from "./codex-client.js";
+import { canvasAgentMcpEnvironment, CodexAppClient } from "./codex-client.js";
 import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
 
 type TestClient = {
@@ -18,6 +18,32 @@ type TestClient = {
 };
 
 const emptyEventHistory = { record: () => Promise.resolve(), recordTurn: () => Promise.resolve() };
+
+test("Canvas MCP 显式复用 HTTP Agent token 并走回环地址", () => {
+    const previousToken = process.env.CANVAS_AGENT_TOKEN;
+    const previousPort = process.env.PORT;
+    const previousMcpUrl = process.env.CANVAS_AGENT_MCP_URL;
+    try {
+        process.env.CANVAS_AGENT_TOKEN = "same-agent-token";
+        process.env.PORT = "18472";
+        delete process.env.CANVAS_AGENT_MCP_URL;
+        assert.deepEqual(canvasAgentMcpEnvironment(), {
+            CANVAS_AGENT_PUBLIC_URL: "http://127.0.0.1:18472",
+            CANVAS_AGENT_TOKEN: "same-agent-token",
+            CANVAS_AGENT_CONFIG_DIR: process.env.CANVAS_AGENT_CONFIG_DIR || "",
+        });
+
+        process.env.CANVAS_AGENT_MCP_URL = "http://canvas-agent.internal/";
+        assert.equal(canvasAgentMcpEnvironment().CANVAS_AGENT_PUBLIC_URL, "http://canvas-agent.internal");
+    } finally {
+        if (previousToken === undefined) delete process.env.CANVAS_AGENT_TOKEN;
+        else process.env.CANVAS_AGENT_TOKEN = previousToken;
+        if (previousPort === undefined) delete process.env.PORT;
+        else process.env.PORT = previousPort;
+        if (previousMcpUrl === undefined) delete process.env.CANVAS_AGENT_MCP_URL;
+        else process.env.CANVAS_AGENT_MCP_URL = previousMcpUrl;
+    }
+});
 
 test("审批只在 app-server 确认 resolved 后清除", () => {
     const writes: Array<Record<string, unknown>> = [];

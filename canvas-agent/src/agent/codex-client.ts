@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createAgentLogWriter } from "../utils/agent-runtime.js";
-import { VERSION } from "../config.js";
+import { DEFAULT_PORT, loadConfig, VERSION } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
@@ -782,9 +782,27 @@ function canvasAgentMcpCommand() {
     return entry.endsWith(".ts") ? { command: process.execPath, args: [tsx, entry, "mcp"] } : { command: process.execPath, args: [entry, "mcp"] };
 }
 
+/**
+ * Explicitly pass the HTTP agent connection to Codex's MCP child process.
+ *
+ * Codex app-server intentionally builds a constrained environment for MCP
+ * servers, so relying on the Canvas Agent process environment can give the
+ * MCP a different generated token. The MCP runs beside the HTTP agent and
+ * should use the loopback address rather than the browser-facing public URL.
+ */
+export function canvasAgentMcpEnvironment() {
+    const config = loadConfig(false);
+    const port = Number(process.env.PORT) || DEFAULT_PORT;
+    return {
+        CANVAS_AGENT_PUBLIC_URL: String(process.env.CANVAS_AGENT_MCP_URL || `http://127.0.0.1:${port}`).replace(/\/$/, ""),
+        CANVAS_AGENT_TOKEN: config.token,
+        CANVAS_AGENT_CONFIG_DIR: process.env.CANVAS_AGENT_CONFIG_DIR || "",
+    };
+}
+
 /** 生成 Codex app-server 使用的 MCP 配置。 */
 function codexConfig(permissionMode: AgentPermissionMode) {
-    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { "infinite-canvas": { command: canvasAgentMcp.command, args: canvasAgentMcp.args, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
+    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { "infinite-canvas": { command: canvasAgentMcp.command, args: canvasAgentMcp.args, env: canvasAgentMcpEnvironment(), default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
 }
 
 function threadSettings(permissionMode: AgentPermissionMode) {
