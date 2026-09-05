@@ -294,7 +294,9 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
     }
 
     for (const [key, definition] of Object.entries(properties)) {
-        if (input[key] !== undefined || definition.default === undefined) continue;
+        // Optional nullable defaults must be omitted. Crun validates media
+        // fields such as img_urls as arrays and rejects an explicit null.
+        if (input[key] !== undefined || definition.default === undefined || definition.default === null) continue;
         input[key] = definition.default;
     }
     return input;

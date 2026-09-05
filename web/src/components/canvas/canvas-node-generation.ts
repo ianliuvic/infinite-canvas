@@ -65,6 +65,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
 
 function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
+    const connectedResources = flattenGenerationInputs(inputs);
     const selectedInputs: NodeGenerationResourceInput[] = [];
     const labelByNodeId = new Map<string, string>();
     const textBlocks: string[] = [];
@@ -96,25 +97,23 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 
     nextPrompt += prompt.slice(lastIndex);
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
+
+    // A media edge is an explicit reference relationship even when the
+    // composer text only contains tokens for connected text nodes. Keeping
+    // media dependent on an @ token made the UI report a connected image
+    // while silently sending an empty image list to the provider.
+    for (const resource of connectedResources) {
+        if (resource.type === "text" || labelByNodeId.has(resource.nodeId)) continue;
+        labelByNodeId.set(resource.nodeId, generationLabel(resource.type, counts[resource.type]++));
+        selectedInputs.push(resource);
+    }
+
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
     const referenceAudios = selectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
-    if (!hasToken) {
-        return {
-            prompt,
-            referenceImages: [],
-            referenceVideos: [],
-            referenceAudios: [],
-            textCount: 0,
-            imageCount: 0,
-            videoCount: 0,
-            audioCount: 0,
-        };
-    }
-
     return {
-        prompt: nextPrompt,
+        prompt: hasToken ? nextPrompt : prompt,
         referenceImages,
         referenceVideos,
         referenceAudios,
