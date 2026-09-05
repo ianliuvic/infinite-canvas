@@ -606,8 +606,10 @@ function representativeFrameTimes(duration: number, sceneTimes: number[], maxFra
 }
 
 function parseFrameRate(value = "") {
-    const [numerator, denominator = "1"] = value.split("/").map(Number);
-    return denominator ? numerator / denominator : 0;
+    const [rawNumerator = "0", rawDenominator = "1"] = value.split("/");
+    const numerator = Number(rawNumerator);
+    const denominator = Number(rawDenominator);
+    return Number.isFinite(numerator) && Number.isFinite(denominator) && denominator ? numerator / denominator : 0;
 }
 
 function withVideoAttachmentContext(prompt: string, videos: VideoAnalysis[]) {

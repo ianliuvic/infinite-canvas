@@ -344,19 +344,20 @@ export class CanvasSession {
     setTurnAttachments(clientId: string, attachments: AgentAttachment[]) {
         this.turnAttachments.clear();
         return attachments.flatMap((item, index) => {
-            const kind = item.dataUrl?.startsWith("data:image/") ? "image" : item.dataUrl?.startsWith("data:video/") ? "video" : null;
+            const dataUrl = String(item.dataUrl || "");
+            const kind = dataUrl.startsWith("data:image/") ? "image" : dataUrl.startsWith("data:video/") ? "video" : null;
             if (!kind) return [];
             const id = item.id?.trim() || `attachment-${crypto.randomUUID()}`;
             const attachment: TurnAttachment = {
                 clientId,
                 id,
                 name: item.name?.trim() || `${kind === "image" ? "图片" : "视频"} ${index + 1}`,
-                type: item.type?.startsWith(`${kind}/`) ? item.type : item.dataUrl.match(/^data:([^;]+)/)?.[1] || (kind === "image" ? "image/png" : "video/mp4"),
+                type: item.type?.startsWith(`${kind}/`) ? item.type : dataUrl.match(/^data:([^;]+)/)?.[1] || (kind === "image" ? "image/png" : "video/mp4"),
                 kind,
                 size: positiveNumber(item.size, 0),
                 width: positiveNumber(item.width, kind === "image" ? 1024 : 1280),
                 height: positiveNumber(item.height, kind === "image" ? 1024 : 720),
-                dataUrl: item.dataUrl,
+                dataUrl,
             };
             this.turnAttachments.set(id, attachment);
             return [{ id, name: attachment.name, type: attachment.type, kind: attachment.kind, size: attachment.size, width: attachment.width, height: attachment.height }];
