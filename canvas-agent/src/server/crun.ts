@@ -79,6 +79,12 @@ export async function generateWithCrun(body: CrunGenerateInput) {
         uploaded.push({ kind: reference.kind, url });
     }
     const input = buildModelInput(schema, { capability, prompt, params: body.params || {}, media: uploaded });
+    logger.info("Crun task estimate prepared", {
+        model,
+        schemaFields: schemaProperties(schema),
+        requiredFields: Array.isArray(schema?.required) ? schema.required.filter((value): value is string => typeof value === "string") : [],
+        input: summarizeCrunInput(input),
+    });
 
     const estimate = await crunStage("task estimate", () => crunRequest("POST", "/api/v1/client/job/EstimateTask", { model, input }));
     if (estimate && typeof estimate === "object" && (estimate as Record<string, unknown>).affordable === false) {
@@ -292,6 +298,35 @@ function buildModelInput(schema: Record<string, unknown> | null, source: { capab
         input[key] = definition.default;
     }
     return input;
+}
+
+function schemaProperties(schema: Record<string, unknown> | null) {
+    if (!schema?.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties)) return [];
+    return Object.keys(schema.properties).sort();
+}
+
+function summarizeCrunInput(input: Record<string, unknown>) {
+    return Object.fromEntries(Object.entries(input).map(([key, value]) => {
+        if (key === "prompt") return [key, { type: "string", length: typeof value === "string" ? value.length : 0 }];
+        if (Array.isArray(value)) {
+            return [key, {
+                type: "array",
+                length: value.length,
+                itemTypes: Array.from(new Set(value.map((item) => typeof item))),
+                urlHosts: Array.from(new Set(value.flatMap((item) => typeof item === "string" && /^https?:\/\//i.test(item) ? [safeUrlHost(item)] : []))),
+            }];
+        }
+        if (typeof value === "string" && /^https?:\/\//i.test(value)) return [key, { type: "url", host: safeUrlHost(value) }];
+        return [key, { type: typeof value, value }];
+    }));
+}
+
+function safeUrlHost(value: string) {
+    try {
+        return new URL(value).host;
+    } catch {
+        return "invalid";
+    }
 }
 
 function setFirst(target: Record<string, unknown>, accepts: (name: string) => boolean, names: string[], value: unknown) {
