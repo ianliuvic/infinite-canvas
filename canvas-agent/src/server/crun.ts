@@ -24,6 +24,7 @@ type CrunGenerateInput = {
 
 const CRUN_API_BASE = String(process.env.CRUN_API_BASE_URL || "https://api.crun.ai").replace(/\/+$/, "");
 const CATALOG_PATH = String(process.env.CRUN_MODEL_CATALOG || "/opt/codex-worker/bundled-skills/crun-agent-skills/catalog/models.json");
+const MEDIA_READY_DELAYS_MS = [200, 400, 800, 1600, 2500];
 
 const MODEL_SCRIPTS: Record<CrunCapability, string> = {
     image: `const result = await http.post("/generate", { model, capability: "image", prompt, images, params });
@@ -180,7 +181,23 @@ async function ensureRemoteMedia(value: string, kind: string) {
     if (!presignedUrl || !fileUrl) throw new CrunHttpError(502, "Crun did not return a media upload URL");
     const response = await fetch(presignedUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: data, signal: AbortSignal.timeout(120_000) });
     if (!response.ok) throw new CrunHttpError(502, `Reference media upload failed (${response.status})`);
+    await waitForRemoteMedia(fileUrl, contentType);
     return fileUrl;
+}
+
+async function waitForRemoteMedia(fileUrl: string, contentType: string) {
+    for (let attempt = 0; attempt <= MEDIA_READY_DELAYS_MS.length; attempt += 1) {
+        try {
+            const response = await fetch(fileUrl, { method: "GET", headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(10_000) });
+            if (response.ok) {
+                await response.body?.cancel();
+                return;
+            }
+        } catch {}
+        if (attempt === MEDIA_READY_DELAYS_MS.length) break;
+        await delay(MEDIA_READY_DELAYS_MS[attempt]);
+    }
+    throw new CrunHttpError(502, `Uploaded ${contentType} reference is not readable from Crun storage`);
 }
 
 async function crunStage<T>(stage: string, action: () => Promise<T>) {
