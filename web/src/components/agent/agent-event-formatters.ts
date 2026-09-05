@@ -62,7 +62,8 @@ export function agentMessageToChatMessage(item: AgentChatItem, endpoint: string,
 }
 
 export function agentAttachmentToChatAttachment(item: AgentMessageAttachment, endpoint: string, token: string): AgentChatAttachment {
-    return { id: item.id, name: item.name, url: resolveAgentMessageAssetUrl(endpoint, token, item.dataUrl || item.url) };
+    const url = item.dataUrl || item.url;
+    return { id: item.id, name: item.name, type: item.type, size: item.size, url: url ? resolveAgentMessageAssetUrl(endpoint, token, url) : undefined };
 }
 
 export function formatAgentEvent(event: AgentEventPayload): Omit<AgentChatItem, "id"> | null {
@@ -494,7 +495,7 @@ function numberField(value: unknown, key: string) {
 }
 
 export function promptWithAttachments(text: string, attachments: AgentAttachment[]) {
-    return text || (attachments.length ? tr("attachmentPrompt") : "");
+    return text || (attachments.length ? i18n.t("agent.attachmentPrompt") : "");
 }
 
 export function promptWithCanvasReferences(text: string, references: CanvasResourceReference[]) {

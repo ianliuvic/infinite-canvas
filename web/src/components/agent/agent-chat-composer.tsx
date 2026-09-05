@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Button, Dropdown, Tooltip } from "antd";
-import { ArrowUp, Check, ChevronUp, Cpu, Gauge, Hand, ImagePlus, LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronUp, Cpu, FileText, Gauge, Hand, LoaderCircle, Paperclip, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -64,10 +64,10 @@ export function AgentChatComposer({
                 {attachments.length ? (
                     <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
                         {attachments.map((item) => (
-                            <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: theme.node.stroke }} title={item.name}>
-                                <img src={item.url} alt={item.name} className="size-full object-cover" />
+                            <div key={item.id} className={`group relative shrink-0 overflow-hidden rounded-xl border ${item.type?.startsWith("image/") && item.url ? "size-14" : "flex h-14 max-w-48 items-center gap-2 px-3 pr-8"}`} style={{ borderColor: theme.node.stroke }} title={item.name}>
+                                {item.type?.startsWith("image/") && item.url ? <img src={item.url} alt={item.name} className="size-full object-cover" /> : <><FileText className="size-5 shrink-0" style={{ color: theme.node.muted }} /><span className="truncate text-xs" style={{ color: theme.node.text }}>{item.name}</span></>}
                                 {onRemoveAttachment ? (
-                                    <button type="button" className="absolute right-1 top-1 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label={t("agent.composer.removeImage")}>
+                                    <button type="button" className="absolute right-1 top-1 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label={t("agent.removeFile")}>
                                         <X className="size-3" />
                                     </button>
                                 ) : null}
@@ -80,12 +80,12 @@ export function AgentChatComposer({
                     <div className="flex min-w-0 items-center gap-1">
                         {onAddFiles ? (
                             <>
-                                <input ref={fileInputRef} hidden type="file" accept="image/*" multiple onChange={(event) => {
+                                <input ref={fileInputRef} hidden type="file" accept="image/*,.pdf,.txt,.md,.markdown,.json,application/pdf,text/plain,text/markdown,application/json" multiple onChange={(event) => {
                                     void onAddFiles(event.target.files);
                                     event.target.value = "";
                                 }} />
-                                <Tooltip title={t("agent.composer.uploadImage")}>
-                                    <Button type="text" shape="circle" className="!h-9 !w-9 !min-w-9" disabled={disabled || sending} style={{ color: theme.node.muted }} icon={<ImagePlus className="size-4" />} onClick={() => fileInputRef.current?.click()} aria-label={t("agent.composer.uploadImage")} />
+                                <Tooltip title={t("agent.uploadFile")}>
+                                    <Button type="text" shape="circle" className="!h-9 !w-9 !min-w-9" disabled={disabled || sending} style={{ color: theme.node.muted }} icon={<Paperclip className="size-4" />} onClick={() => fileInputRef.current?.click()} aria-label={t("agent.uploadFile")} />
                                 </Tooltip>
                             </>
                         ) : null}

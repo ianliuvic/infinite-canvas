@@ -5,7 +5,7 @@ export type AgentEmit = (type: string, payload: unknown) => void;
 export type AgentAttachment = { id?: string; name?: string; type?: string; size?: number; width?: number; height?: number; dataUrl?: string };
 
 /** 用户消息在历史记录中展示所需的附件信息。 */
-export type AgentAttachmentDisplay = { id: string; name: string; type?: string; size?: number; width?: number; height?: number; url: string };
+export type AgentAttachmentDisplay = { id: string; name: string; type?: string; size?: number; width?: number; height?: number; url?: string };
 
 /** 用户消息引用的画布素材。 */
 export type AgentCanvasReference = { nodeId: string; label: string; title: string; kind: "image" | "video" | "audio" | "text"; previewUrl?: string; text?: string };

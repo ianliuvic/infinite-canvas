@@ -220,9 +220,11 @@ function normalizeAttachment(value: unknown, allowAsset: boolean): AgentAttachme
     const item = value as Record<string, unknown>;
     const id = text(item.id, 200);
     const name = text(item.name, 500);
+    const fields = numberFields(item);
     const url = imagePreview(item.url, allowAsset);
-    if (!id || !name || !url) return undefined;
-    return { id, name, url, ...numberFields(item) };
+    const image = fields.type?.startsWith("image/") || Boolean(url);
+    if (!id || !name || (image && !url) || (!image && !documentAttachment(name, fields.type))) return undefined;
+    return { id, name, ...(url ? { url } : {}), ...fields };
 }
 
 function normalizeCanvasReference(value: unknown, allowAsset: boolean): AgentCanvasReference | undefined {
@@ -282,7 +284,7 @@ function storageKey(value: string) {
 }
 
 async function persistMetadataPreviews(directory: string, clientMessageId: string, metadata: AgentMessageMetadata) {
-    const attachments = await Promise.all((metadata.attachments || []).map(async (item) => ({ ...item, url: await persistImagePreview(directory, clientMessageId, `attachment:${item.id}`, item.url) })));
+    const attachments = await Promise.all((metadata.attachments || []).map(async (item) => item.url ? { ...item, url: await persistImagePreview(directory, clientMessageId, `attachment:${item.id}`, item.url) } : item));
     const canvasReferences = await Promise.all((metadata.canvasReferences || []).map(async (item) => ({
         ...item,
         ...(item.kind === "image" && item.previewUrl ? { previewUrl: await persistImagePreview(directory, clientMessageId, `reference:${item.nodeId}`, item.previewUrl) } : {}),
@@ -292,6 +294,10 @@ async function persistMetadataPreviews(directory: string, clientMessageId: strin
         ...(canvasReferences.length ? { canvasReferences } : {}),
         ...(metadata.skill ? { skill: metadata.skill } : {}),
     };
+}
+
+function documentAttachment(name: string, type = "") {
+    return ["application/pdf", "application/json", "text/plain", "text/markdown"].includes(type.toLowerCase()) || /\.(?:pdf|txt|md|markdown|json)$/i.test(name);
 }
 
 async function persistImagePreview(directory: string, clientMessageId: string, key: string, value: string) {

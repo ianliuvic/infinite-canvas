@@ -188,10 +188,10 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
                     syncFromEditor();
                 }}
                 onPaste={(event) => {
-                    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-                    if (images.length && onAddFiles) {
+                    const files = Array.from(event.clipboardData.files).filter(isSupportedAgentAttachment);
+                    if (files.length && onAddFiles) {
                         event.preventDefault();
-                        void onAddFiles(images);
+                        void onAddFiles(files);
                         return;
                     }
                     event.preventDefault();
@@ -240,6 +240,10 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
             {command ? <AgentCommandMenu command={command} candidates={candidates} activeIndex={Math.min(activeIndex, Math.max(candidates.length - 1, 0))} loading={command.type === "skill" && skillsLoading} theme={theme} onSelect={insertCandidate} /> : null}
         </div>
     );
+}
+
+function isSupportedAgentAttachment(file: File) {
+    return file.type.startsWith("image/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json)$/i.test(file.name);
 }
 function AgentCommandMenu({ command, candidates, activeIndex, loading, theme, onSelect }: { command: ComposerCommand; candidates: ComposerCandidate[]; activeIndex: number; loading: boolean; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (candidate: ComposerCandidate) => void }) {
     const { t } = useTranslation();

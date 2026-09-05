@@ -15,6 +15,7 @@ import type { AgentAttachment, AgentEmit, AgentPermissionMode } from "./types.js
 
 type CodexRunOptions = { threadId?: string; cwd?: string; permissionMode?: AgentPermissionMode; model?: string; effort?: CodexReasoningEffort; skill?: CodexSkillSelector; messageText?: string; appEmit?: AgentEmit; onStart?: () => void; onThread?: (threadId: string) => void; onTurn?: (turnId: string) => void; onFinish?: () => void };
 type CodexSkillDraftInput = { model?: string; effort?: CodexReasoningEffort } & ({ source: "conversation"; threadId: string } | { source: "canvas"; snapshot: CanvasSnapshot });
+type PreparedAttachment = { file: string; name: string; type: string; image: boolean };
 
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const skillDraftSchema = z.object({
@@ -188,29 +189,32 @@ export function isRecoverableThreadError(error: unknown) {
 
 /** 执行一次 Codex turn，并负责附件临时文件和线程恢复。 */
 async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions) {
-    let files: string[] = [];
+    let attachmentDirectory = "";
     try {
         options.onStart?.();
-        files = await writeAttachmentFiles(attachments);
+        const prepared = await writeAttachmentFiles(attachments, options.cwd);
+        attachmentDirectory = prepared.directory;
+        const images = prepared.items.filter((item) => item.image).map((item) => item.file);
+        const turnPrompt = withDocumentAttachmentContext(prompt, prepared.items.filter((item) => !item.image));
         const app = await getCodexApp(options.appEmit || lifecycleEmit);
         let threadId = await ensureCodexThread(app, options, lifecycleEmit);
         options.onThread?.(threadId);
         try {
-            await app.startTurn(threadId, prompt, files, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
+            await app.startTurn(threadId, turnPrompt, images, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         } catch (error) {
             if (!isRecoverableThreadError(error)) throw error;
             lifecycleEmit("agent_log", { text: `Codex thread unavailable, starting a new thread: ${errorMessage(error)}` });
             loadedThreadId = "";
             threadId = await ensureCodexThread(app, { cwd: options.cwd }, lifecycleEmit);
             options.onThread?.(threadId);
-            await app.startTurn(threadId, prompt, files, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
+            await app.startTurn(threadId, turnPrompt, images, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         }
     } catch (error) {
         logger.error("Codex turn failed", error);
         if (!(error instanceof CodexReportedError)) lifecycleEmit("agent_error", { message: errorMessage(error) });
     } finally {
         options.onFinish?.();
-        await Promise.all(files.map((file) => fs.unlink(file).catch(() => undefined)));
+        if (attachmentDirectory) await fs.rm(attachmentDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
 }
 
@@ -486,18 +490,30 @@ function samePath(left: string, right: string) {
     return normalize(left) === normalize(right);
 }
 
-/** 将图片附件写入临时文件供 Codex 读取。 */
-async function writeAttachmentFiles(attachments: AgentAttachment[]) {
-    return await Promise.all(attachments.filter((item) => item.dataUrl?.startsWith("data:image/")).map(writeAttachmentFile));
+/** 将附件写入当前工作区的临时目录供 Codex 读取。 */
+async function writeAttachmentFiles(attachments: AgentAttachment[], cwd?: string) {
+    if (!attachments.length) return { directory: "", items: [] as PreparedAttachment[] };
+    const directory = await fs.mkdtemp(path.join(cwd || os.tmpdir(), ".canvas-agent-attachments-"));
+    try {
+        return { directory, items: await Promise.all(attachments.map((item, index) => writeAttachmentFile(item, directory, index))) };
+    } catch (error) {
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined);
+        throw error;
+    }
 }
 
-/** 将单个 Data URL 图片附件写入临时文件。 */
-async function writeAttachmentFile(item: AgentAttachment) {
+/** 将单个 Data URL 附件写入临时文件。 */
+async function writeAttachmentFile(item: AgentAttachment, directory: string, index: number): Promise<PreparedAttachment> {
     const [, meta = "", data = ""] = item.dataUrl?.match(/^data:([^;]+);base64,(.+)$/) || [];
-    if (!data) throw new Error(`图片附件无效：${item.name || "未命名图片"}`);
-    const file = path.join(os.tmpdir(), `infinite-canvas-${Date.now()}-${Math.random().toString(16).slice(2)}.${imageExt(meta || item.type)}`);
+    const type = String(item.type || meta || "application/octet-stream").toLowerCase();
+    const name = String(item.name || `attachment-${index + 1}`);
+    const image = type.startsWith("image/") || meta.startsWith("image/");
+    const extension = image ? imageExt(type || meta) : documentExt(name, type);
+    if (!data || !extension) throw new Error(`不支持或无效的附件：${name}`);
+    const base = path.basename(name, path.extname(name)).replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 100) || `attachment-${index + 1}`;
+    const file = path.join(directory, `${index + 1}-${base}.${extension}`);
     await fs.writeFile(file, Buffer.from(data, "base64"));
-    return file;
+    return { file, name, type, image };
 }
 
 /** 根据图片 MIME 类型返回临时文件扩展名。 */
@@ -505,4 +521,20 @@ function imageExt(type = "") {
     if (type.includes("png")) return "png";
     if (type.includes("webp")) return "webp";
     return "jpg";
+}
+
+function documentExt(name: string, type: string) {
+    const extension = path.extname(name).slice(1).toLowerCase();
+    if (["pdf", "txt", "md", "markdown", "json"].includes(extension)) return extension === "markdown" ? "md" : extension;
+    if (type === "application/pdf") return "pdf";
+    if (type === "application/json") return "json";
+    if (type === "text/markdown") return "md";
+    if (type === "text/plain") return "txt";
+    return "";
+}
+
+function withDocumentAttachmentContext(prompt: string, attachments: PreparedAttachment[]) {
+    if (!attachments.length) return prompt;
+    const files = attachments.map((item, index) => `${index + 1}. ${JSON.stringify(item.name)} (${item.type})：${item.file}`).join("\n");
+    return `${prompt}\n\n本轮用户上传了以下文本或 PDF 文件，文件已临时放在当前工作区内。请按用户要求直接读取和处理；不要声称无法访问附件。\n${files}`;
 }

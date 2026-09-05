@@ -386,7 +386,7 @@ export function startHttpServer() {
         session.setCodexState({ busy: true, threadId, turnId: "" });
         try {
             let turnId = "";
-            const attachmentRefs = session.setTurnAttachments(clientId, attachments);
+            const attachmentRefs = session.setTurnAttachments(clientId, attachments.filter((item) => String(item.type || "").startsWith("image/") || String(item.dataUrl || "").startsWith("data:image/")));
             session.emitThread("chat_message", threadId, {
                 sourceClientId: clientId,
                 message: { id: `${threadId}:pending:synthetic:user`, itemId: "synthetic:user", clientMessageId: messageId, threadId, turnId: "", role: "user", text: messageText, ...messageMetadata },

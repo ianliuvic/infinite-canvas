@@ -87,7 +87,7 @@ function localFilePath(value: string) {
     return /^\/(?:Users|home|private|tmp|Volumes|var\/folders)\//.test(pathname) ? decodeURIComponent(pathname) : "";
 }
 
-export type AgentChatAttachment = { id: string; name: string; url: string };
+export type AgentChatAttachment = { id: string; name: string; url?: string; type?: string; size?: number };
 export type AgentChatMessageItem = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -499,15 +499,17 @@ function AgentMessageAttachments({ attachments, alignRight }: { attachments: Age
         <>
             <div className={`mt-1.5 flex flex-wrap gap-1.5 ${alignRight ? "justify-end" : "justify-start"}`}>
                 {attachments.map((item) => (
-                    <img
-                        key={item.id}
-                        src={item.url}
-                        alt={item.name}
-                        title={t("agent.message.viewLarge")}
-                        className="size-10 cursor-zoom-in rounded-lg object-cover"
-                        draggable={false}
-                        onClick={() => setPreviewUrl(item.url)}
-                    />
+                    item.type?.startsWith("image/") && item.url ? (
+                        <img key={item.id} src={item.url} alt={item.name} title={t("agent.message.viewLarge")} className="size-10 cursor-zoom-in rounded-lg object-cover" draggable={false} onClick={() => setPreviewUrl(item.url || null)} />
+                    ) : (
+                        <div key={item.id} className="flex max-w-52 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left" title={item.name}>
+                            <FileText className="size-4 shrink-0 opacity-60" />
+                            <span className="min-w-0">
+                                <span className="block truncate text-xs">{item.name}</span>
+                                {typeof item.size === "number" ? <span className="block text-[10px] opacity-50">{formatAttachmentSize(item.size)}</span> : null}
+                            </span>
+                        </div>
+                    )
                 ))}
             </div>
             {previewUrl ? (
@@ -517,6 +519,12 @@ function AgentMessageAttachments({ attachments, alignRight }: { attachments: Age
             ) : null}
         </>
     );
+}
+
+function formatAttachmentSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function toolCardState(title: string, text: string, detail?: unknown) {

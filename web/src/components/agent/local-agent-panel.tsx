@@ -74,7 +74,7 @@ const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
 const MESSAGE_PREVIEW_LONG_EDGE = 192;
 const MESSAGE_PREVIEW_MAX_LENGTH = 500_000;
 const DEFAULT_AGENT_URL = CANVAS_AGENT_URL;
-const AGENT_PROTOCOL_VERSION = 6;
+const AGENT_PROTOCOL_VERSION = 7;
 const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
 const AGENT_REASONING_EFFORTS = new Set<AgentReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const rt = (key: string, options?: Record<string, unknown>) => i18n.t(`agent.runtime.${key}`, options);
@@ -679,17 +679,17 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         }
         const requestFiles = [...files, ...referenceImages.filter((reference) => !files.some((file) => file.dataUrl === reference.dataUrl))];
         if (requestFiles.length > MAX_ATTACHMENTS) {
-            setAgentState({ sending: false, activity: rt("tooManyImages") });
-            addMessage({ role: "error", title: rt("tooManyImages"), text: rt("imageCountLimit", { count: MAX_ATTACHMENTS }) });
+            setAgentState({ sending: false, activity: rt("tooManyFiles") });
+            addMessage({ role: "error", title: rt("tooManyFiles"), text: rt("fileCountLimit", { count: MAX_ATTACHMENTS }) });
             return;
         }
         if (attachmentPayloadBytes(requestFiles) > MAX_ATTACHMENT_PAYLOAD_BYTES) {
-            setAgentState({ sending: false, activity: rt("imageTooLarge") });
-            addMessage({ role: "error", title: rt("imageTooLarge"), text: rt("imagePayloadTooLarge") });
+            setAgentState({ sending: false, activity: rt("attachmentTooLarge") });
+            addMessage({ role: "error", title: rt("attachmentTooLarge"), text: rt("attachmentPayloadTooLarge") });
             return;
         }
         const messageId = createId();
-        const userText = text || rt(files.length ? "imagesSent" : "canvasReferencesSent", { count: files.length || canvasReferences.length });
+        const userText = text || rt(files.length ? "filesSent" : "canvasReferencesSent", { count: files.length || canvasReferences.length });
         const messageReferences: AgentCanvasReference[] = await Promise.all(canvasReferences.map(async ({ nodeId, label, title, kind, previewUrl, text }) => {
             const image = referenceImages.find((item) => item.id === `canvas:${nodeId}`);
             return { nodeId, label, title, kind, previewUrl: image ? (await createMessageAttachmentMetadata(image)).url : previewUrl, text };
@@ -780,16 +780,17 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     const addAttachments = async (files: FileList | File[] | null) => {
         if (!files) return;
-        const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
+        const accepted = Array.from(files).filter(isSupportedAgentAttachment);
         const prev = useAgentStore.getState().attachments;
         try {
             const next = await Promise.all(
-                images.slice(0, Math.max(0, MAX_ATTACHMENTS - prev.length)).map(async (file) => {
+                accepted.slice(0, Math.max(0, MAX_ATTACHMENTS - prev.length)).map(async (file) => {
                     const dataUrl = await readDataUrl(file);
-                    const meta = await readImageMeta(dataUrl);
+                    const image = file.type.startsWith("image/");
+                    const meta = image ? await readImageMeta(dataUrl) : { width: 0, height: 0 };
                     const url = URL.createObjectURL(file);
                     attachmentUrlsRef.current.add(url);
-                    return { id: createId(), name: file.name, type: file.type, size: file.size, width: meta.width, height: meta.height, url, dataUrl };
+                    return { id: createId(), name: file.name, type: normalizedAttachmentType(file), size: file.size, width: meta.width, height: meta.height, url, dataUrl };
                 }),
             );
             const merged = [...prev, ...next];
@@ -798,12 +799,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     URL.revokeObjectURL(item.url);
                     attachmentUrlsRef.current.delete(item.url);
                 });
-                addMessage({ role: "error", title: rt("imageTooLarge"), text: rt("imageLimit") });
+                addMessage({ role: "error", title: rt("attachmentTooLarge"), text: rt("attachmentLimit") });
                 return;
             }
             if (next.length) setAgentState({ attachments: merged });
         } catch (error) {
-            addMessage({ role: "error", title: rt("imageReadFailed"), text: error instanceof Error ? error.message : rt("imageReadFailed") });
+            addMessage({ role: "error", title: rt("fileReadFailed"), text: error instanceof Error ? error.message : rt("fileReadFailed") });
         }
     };
 
@@ -1616,10 +1617,23 @@ function createId() {
 }
 
 async function createMessageAttachmentMetadata(item: AgentAttachment) {
+    if (!item.type.startsWith("image/")) return { id: item.id, name: item.name, type: item.type, size: item.size, width: item.width, height: item.height };
     const url = Math.max(item.width, item.height) > MESSAGE_PREVIEW_LONG_EDGE || item.dataUrl.length > MESSAGE_PREVIEW_MAX_LENGTH
         ? await upscaleDataUrl(item.dataUrl, { targetLongEdge: MESSAGE_PREVIEW_LONG_EDGE, algorithm: "high" })
         : item.dataUrl;
     return { id: item.id, name: item.name, type: item.type, size: item.size, width: item.width, height: item.height, url };
+}
+
+function isSupportedAgentAttachment(file: File) {
+    return file.type.startsWith("image/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json)$/i.test(file.name);
+}
+
+function normalizedAttachmentType(file: File) {
+    if (file.type) return file.type;
+    if (/\.pdf$/i.test(file.name)) return "application/pdf";
+    if (/\.json$/i.test(file.name)) return "application/json";
+    if (/\.(?:md|markdown)$/i.test(file.name)) return "text/markdown";
+    return "text/plain";
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1657,7 +1671,7 @@ function readDataUrl(file: Blob) {
     return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(reader.error || new Error(rt("imageReadFailed")));
+        reader.onerror = () => reject(reader.error || new Error(rt("fileReadFailed")));
         reader.readAsDataURL(file);
     });
 }
