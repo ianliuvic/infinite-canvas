@@ -437,8 +437,13 @@ function InfiniteCanvasPage() {
         }
 
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            let restoredNodes = resetInterruptedGeneration(project.nodes);
+            let restoredSessions = project.chatSessions || [];
+            try {
+                [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(restoredNodes), hydrateAssistantImages(restoredSessions)]);
+            } catch (error) {
+                console.error("Unable to hydrate persisted canvas media", error);
+            }
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);

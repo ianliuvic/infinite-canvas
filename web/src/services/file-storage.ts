@@ -26,11 +26,13 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     let blob = await store.getItem<Blob>(storageKey);
-    if (blob && !remoteSynced.has(storageKey)) {
-        if (await writeRemoteObject(storageKey, blob)) remoteSynced.add(storageKey);
-    }
     if (!blob) {
-        blob = await readRemoteObject(storageKey);
+        try {
+            blob = await readRemoteObject(storageKey);
+        } catch (error) {
+            console.warn(`Unable to restore media ${storageKey} from remote storage`, error);
+            return fallback;
+        }
         if (blob) {
             await store.setItem(storageKey, blob);
             remoteSynced.add(storageKey);
