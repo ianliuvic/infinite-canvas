@@ -47,7 +47,8 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
-import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceReferences, buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { agentReferenceMarker } from "@/components/agent/agent-chat-inline-tokens";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
@@ -1844,6 +1845,26 @@ function InfiniteCanvasPage() {
         [addAsset, message, t],
     );
 
+    const addNodeToAgent = useCallback(
+        (node: CanvasNodeData) => {
+            const reference = buildCanvasResourceReferences(nodesRef.current).find((item) => item.nodeId === node.id);
+            if (!reference) {
+                message.warning(t("canvas.nodeToolbar.addToAgentUnavailable"));
+                return;
+            }
+            const state = useAgentStore.getState();
+            const references = [...state.canvasReferences.filter((item) => item.nodeId !== reference.nodeId), reference];
+            const marker = agentReferenceMarker(reference);
+            const prompt = state.prompt.includes(marker)
+                ? state.prompt
+                : `${state.prompt.trimEnd()}${state.prompt.trim() ? " " : ""}${marker} `;
+            state.setAgentState({ canvasReferences: references, prompt, activeTab: state.connected ? "chat" : "setup" });
+            openAgentPanel();
+            message.success(t("canvas.nodeToolbar.addedToAgent", { name: reference.title }));
+        },
+        [message, openAgentPanel, t],
+    );
+
     const createImageReversePromptNodes = useCallback(
         (node: CanvasNodeData) => {
             if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
@@ -3271,6 +3292,7 @@ function InfiniteCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onAddToAgent={addNodeToAgent}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
