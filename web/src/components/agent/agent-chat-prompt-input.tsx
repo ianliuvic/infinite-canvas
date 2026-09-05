@@ -243,7 +243,7 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
 }
 
 function isSupportedAgentAttachment(file: File) {
-    return file.type.startsWith("image/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json)$/i.test(file.name);
+    return file.type.startsWith("image/") || file.type.startsWith("video/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json|mp4|mov|m4v|webm|mkv|avi)$/i.test(file.name);
 }
 function AgentCommandMenu({ command, candidates, activeIndex, loading, theme, onSelect }: { command: ComposerCommand; candidates: ComposerCandidate[]; activeIndex: number; loading: boolean; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (candidate: ComposerCandidate) => void }) {
     const { t } = useTranslation();

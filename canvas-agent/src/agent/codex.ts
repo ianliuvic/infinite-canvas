@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod";
 
 import type { CanvasSnapshot } from "../canvas/types.js";
@@ -15,7 +17,10 @@ import type { AgentAttachment, AgentEmit, AgentPermissionMode } from "./types.js
 
 type CodexRunOptions = { threadId?: string; cwd?: string; permissionMode?: AgentPermissionMode; model?: string; effort?: CodexReasoningEffort; skill?: CodexSkillSelector; messageText?: string; appEmit?: AgentEmit; onStart?: () => void; onThread?: (threadId: string) => void; onTurn?: (turnId: string) => void; onFinish?: () => void };
 type CodexSkillDraftInput = { model?: string; effort?: CodexReasoningEffort } & ({ source: "conversation"; threadId: string } | { source: "canvas"; snapshot: CanvasSnapshot });
-type PreparedAttachment = { file: string; name: string; type: string; image: boolean };
+type PreparedAttachment = { file: string; name: string; type: string; kind: "image" | "document" | "video" };
+type VideoAnalysis = { attachment: PreparedAttachment; duration: number; width: number; height: number; fps: number; codec: string; hasAudio: boolean; frames: Array<{ file: string; time: number }> };
+
+const execFileAsync = promisify(execFile);
 
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const skillDraftSchema = z.object({
@@ -194,8 +199,12 @@ async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachm
         options.onStart?.();
         const prepared = await writeAttachmentFiles(attachments, options.cwd);
         attachmentDirectory = prepared.directory;
-        const images = prepared.items.filter((item) => item.image).map((item) => item.file);
-        const turnPrompt = withDocumentAttachmentContext(prompt, prepared.items.filter((item) => !item.image));
+        const videos: VideoAnalysis[] = [];
+        const videoAttachments = prepared.items.filter((item) => item.kind === "video");
+        const framesPerVideo = Math.max(2, Math.floor(12 / Math.max(1, videoAttachments.length)));
+        for (const attachment of videoAttachments) videos.push(await analyzeVideo(attachment, prepared.directory, framesPerVideo));
+        const images = [...prepared.items.filter((item) => item.kind === "image").map((item) => item.file), ...videos.flatMap((item) => item.frames.map((frame) => frame.file))];
+        const turnPrompt = withVideoAttachmentContext(withDocumentAttachmentContext(prompt, prepared.items.filter((item) => item.kind === "document")), videos);
         const app = await getCodexApp(options.appEmit || lifecycleEmit);
         let threadId = await ensureCodexThread(app, options, lifecycleEmit);
         options.onThread?.(threadId);
@@ -508,12 +517,13 @@ async function writeAttachmentFile(item: AgentAttachment, directory: string, ind
     const type = String(item.type || meta || "application/octet-stream").toLowerCase();
     const name = String(item.name || `attachment-${index + 1}`);
     const image = type.startsWith("image/") || meta.startsWith("image/");
-    const extension = image ? imageExt(type || meta) : documentExt(name, type);
+    const video = type.startsWith("video/") || meta.startsWith("video/") || Boolean(videoExt(name, type));
+    const extension = image ? imageExt(type || meta) : video ? videoExt(name, type) : documentExt(name, type);
     if (!data || !extension) throw new Error(`不支持或无效的附件：${name}`);
     const base = path.basename(name, path.extname(name)).replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 100) || `attachment-${index + 1}`;
     const file = path.join(directory, `${index + 1}-${base}.${extension}`);
     await fs.writeFile(file, Buffer.from(data, "base64"));
-    return { file, name, type, image };
+    return { file, name, type, kind: image ? "image" : video ? "video" : "document" };
 }
 
 /** 根据图片 MIME 类型返回临时文件扩展名。 */
@@ -533,8 +543,78 @@ function documentExt(name: string, type: string) {
     return "";
 }
 
+function videoExt(name: string, type: string) {
+    const extension = path.extname(name).slice(1).toLowerCase();
+    if (["mp4", "mov", "m4v", "webm", "mkv", "avi"].includes(extension)) return extension;
+    if (type === "video/quicktime") return "mov";
+    if (type === "video/webm") return "webm";
+    if (type === "video/x-matroska") return "mkv";
+    if (type === "video/x-msvideo") return "avi";
+    if (type.startsWith("video/")) return "mp4";
+    return "";
+}
+
 function withDocumentAttachmentContext(prompt: string, attachments: PreparedAttachment[]) {
     if (!attachments.length) return prompt;
     const files = attachments.map((item, index) => `${index + 1}. ${JSON.stringify(item.name)} (${item.type})：${item.file}`).join("\n");
     return `${prompt}\n\n本轮用户上传了以下文本或 PDF 文件，文件已临时放在当前工作区内。请按用户要求直接读取和处理；不要声称无法访问附件。\n${files}`;
+}
+
+async function analyzeVideo(attachment: PreparedAttachment, directory: string, maxFrames: number): Promise<VideoAnalysis> {
+    try {
+        const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=index,codec_type,codec_name,width,height,r_frame_rate", "-of", "json", attachment.file], { maxBuffer: 1024 * 1024 });
+        const probe = JSON.parse(String(stdout)) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; r_frame_rate?: string }> };
+        const stream = probe.streams?.find((item) => item.codec_type === "video");
+        const duration = Math.max(0, Number(probe.format?.duration) || 0);
+        if (!stream || !duration) throw new Error("未找到可解码的视频流或有效时长");
+        const fps = parseFrameRate(stream.r_frame_rate);
+        const sceneTimes = await detectSceneTimes(attachment.file);
+        const times = representativeFrameTimes(duration, sceneTimes, maxFrames);
+        const frameDirectory = path.join(directory, `frames-${path.basename(attachment.file, path.extname(attachment.file))}`);
+        await fs.mkdir(frameDirectory, { recursive: true });
+        const frames: VideoAnalysis["frames"] = [];
+        for (const [index, time] of times.entries()) {
+            const file = path.join(frameDirectory, `${String(index + 1).padStart(2, "0")}-${time.toFixed(3)}s.jpg`);
+            await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", time.toFixed(3), "-i", attachment.file, "-frames:v", "1", "-vf", "scale=1280:-2:force_original_aspect_ratio=decrease", "-q:v", "3", "-y", file], { maxBuffer: 1024 * 1024 });
+            frames.push({ file, time });
+        }
+        return { attachment, duration, width: Number(stream.width) || 0, height: Number(stream.height) || 0, fps, codec: String(stream.codec_name || "unknown"), hasAudio: Boolean(probe.streams?.some((item) => item.codec_type === "audio")), frames };
+    } catch (error) {
+        throw new Error(`视频解析失败（${attachment.name}）：${errorMessage(error)}`);
+    }
+}
+
+async function detectSceneTimes(file: string) {
+    try {
+        const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-i", file, "-vf", "select=gt(scene\\,0.28),showinfo", "-an", "-f", "null", "-"], { maxBuffer: 2 * 1024 * 1024 });
+        return [...stderr.matchAll(/pts_time:([0-9.]+)/g)].map((match) => Number(match[1])).filter(Number.isFinite);
+    } catch (error) {
+        const stderr = String(field(error, "stderr") || "");
+        return [...stderr.matchAll(/pts_time:([0-9.]+)/g)].map((match) => Number(match[1])).filter(Number.isFinite);
+    }
+}
+
+function representativeFrameTimes(duration: number, sceneTimes: number[], maxFrames: number) {
+    const uniformCount = Math.min(8, Math.max(3, Math.ceil(duration / 5)));
+    const uniform = Array.from({ length: uniformCount }, (_, index) => duration * (index + 0.5) / uniformCount);
+    const merged = [0, ...sceneTimes, ...uniform, Math.max(0, duration - 0.05)]
+        .filter((time) => Number.isFinite(time) && time >= 0 && time < duration)
+        .sort((left, right) => left - right)
+        .filter((time, index, values) => index === 0 || time - values[index - 1] >= Math.max(0.35, duration / 120));
+    if (merged.length <= maxFrames) return merged;
+    return Array.from({ length: maxFrames }, (_, index) => merged[Math.round(index * (merged.length - 1) / Math.max(1, maxFrames - 1))]);
+}
+
+function parseFrameRate(value = "") {
+    const [numerator, denominator = "1"] = value.split("/").map(Number);
+    return denominator ? numerator / denominator : 0;
+}
+
+function withVideoAttachmentContext(prompt: string, videos: VideoAnalysis[]) {
+    if (!videos.length) return prompt;
+    const details = videos.map((video, index) => {
+        const frames = video.frames.map((frame) => `${frame.time.toFixed(2)}s=${frame.file}`).join("；");
+        return `${index + 1}. ${JSON.stringify(video.attachment.name)}：源文件=${video.attachment.file}；时长=${video.duration.toFixed(2)}s；分辨率=${video.width}x${video.height}；FPS=${video.fps.toFixed(2)}；编码=${video.codec}；音轨=${video.hasAudio ? "有" : "无"}\n   代表帧：${frames}`;
+    }).join("\n");
+    return `${prompt}\n\n本轮用户上传了以下视频。系统已用 FFprobe 读取元数据，并用 FFmpeg 提取代表帧作为后续图片输入；请使用当前选择的 Agent 模型分析这些画面，并按用户要求调用画布工具创建视频节点、关键帧、分镜、文本或生成配置节点。当前未进行音轨转写，不要声称已经听取或转写音频。\n${details}`;
 }

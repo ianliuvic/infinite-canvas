@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { App, Button, Image, Modal, Popover } from "antd";
-import { Brain, CheckCircle2, ChevronDown, ChevronRight, Circle, CircleAlert, Copy, ExternalLink, FilePenLine, FileText, FolderOpen, ListChecks, LoaderCircle, Search, ShieldAlert, TerminalSquare, Wrench, XCircle } from "lucide-react";
+import { Brain, CheckCircle2, ChevronDown, ChevronRight, Circle, CircleAlert, Copy, ExternalLink, FilePenLine, FileText, Film, FolderOpen, ListChecks, LoaderCircle, Search, ShieldAlert, TerminalSquare, Wrench, XCircle } from "lucide-react";
 import { Streamdown, type LinkSafetyModalProps } from "streamdown";
 import { useTranslation } from "react-i18next";
 
@@ -503,7 +503,7 @@ function AgentMessageAttachments({ attachments, alignRight }: { attachments: Age
                         <img key={item.id} src={item.url} alt={item.name} title={t("agent.message.viewLarge")} className="size-10 cursor-zoom-in rounded-lg object-cover" draggable={false} onClick={() => setPreviewUrl(item.url || null)} />
                     ) : (
                         <div key={item.id} className="flex max-w-52 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left" title={item.name}>
-                            <FileText className="size-4 shrink-0 opacity-60" />
+                            {item.type?.startsWith("video/") ? <Film className="size-4 shrink-0 opacity-60" /> : <FileText className="size-4 shrink-0 opacity-60" />}
                             <span className="min-w-0">
                                 <span className="block truncate text-xs">{item.name}</span>
                                 {typeof item.size === "number" ? <span className="block text-[10px] opacity-50">{formatAttachmentSize(item.size)}</span> : null}

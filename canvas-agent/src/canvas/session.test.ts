@@ -77,6 +77,7 @@ test("当前 turn 的图片附件可在发起标签页画布创建图片节点",
     assert.equal(field(call, "name"), "canvas_create_attachment_nodes");
     assert.equal(nodes.length, 1);
     assert.equal(nodes[0].attachmentId, "attachment-1");
+    assert.equal(nodes[0].kind, "image");
     assert.equal(nodes[0].title, "商品.png");
     assert.deepEqual(nodes[0].position, { x: 100, y: 200 });
     assert.equal(nodes[0].width, 640);
@@ -90,6 +91,28 @@ test("当前 turn 的图片附件可在发起标签页画布创建图片节点",
     assert.equal(created.nodes[0].attachmentId, "attachment-1");
     session.clearTurnAttachments("first");
     assert.throws(() => session.getTurnAttachment("first", "attachment-1"), /找不到/);
+});
+
+test("当前 turn 的视频附件可在发起标签页画布创建视频节点", async (t) => {
+    const session = new CanvasSession();
+    const first = connect(session, "first");
+    t.after(() => first.close());
+    session.setTurnAttachments("first", [{ id: "video-1", name: "演示.mp4", type: "video/mp4", size: 5, width: 1080, height: 1920, dataUrl: "data:video/mp4;base64,dmlkZW8=" }]);
+    session.bindClient("first");
+
+    const result = session.callTool("canvas_create_attachment_nodes", { attachmentIds: ["video-1"] });
+    const call = first.event("tool_call");
+    const nodes = (field(field(call, "input"), "nodes") || []) as Array<Record<string, unknown>>;
+    assert.equal(nodes.length, 1);
+    assert.equal(nodes[0].kind, "video");
+    assert.equal(nodes[0].attachmentId, "video-1");
+    assert.equal(nodes[0].width, 360);
+    assert.equal(nodes[0].height, 640);
+    assert.equal(nodes[0].autoPosition, true);
+
+    session.resolveResult("first", { requestId: String(field(call, "requestId")), result: { ok: true } });
+    const created = (await result) as { nodes: Array<{ kind: string }> };
+    assert.equal(created.nodes[0].kind, "video");
 });
 
 test("图片附件只允许发起 turn 的标签页读取和落入画布", async (t) => {
@@ -221,7 +244,7 @@ test("new clients receive the current Codex state and later updates", (t) => {
     t.after(() => client.close());
 
     const hello = client.event("hello");
-    assert.equal(field(hello, "protocolVersion"), 7);
+    assert.equal(field(hello, "protocolVersion"), 8);
     assert.deepEqual(field(hello, "workspace"), { activeThreadId: "thread-2" });
     assert.deepEqual(field(hello, "conversation"), { revision: 1, conversationId: "thread-2", threadId: "thread-2", status: "ready", mcpStatuses: {} });
     assert.deepEqual(field(hello, "codex"), { busy: true, threadId: "thread-2", turnId: "turn-1" });

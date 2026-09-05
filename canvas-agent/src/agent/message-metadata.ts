@@ -223,7 +223,7 @@ function normalizeAttachment(value: unknown, allowAsset: boolean): AgentAttachme
     const fields = numberFields(item);
     const url = imagePreview(item.url, allowAsset);
     const image = fields.type?.startsWith("image/") || Boolean(url);
-    if (!id || !name || (image && !url) || (!image && !documentAttachment(name, fields.type))) return undefined;
+    if (!id || !name || (image && !url) || (!image && !nonImageAttachment(name, fields.type))) return undefined;
     return { id, name, ...(url ? { url } : {}), ...fields };
 }
 
@@ -298,6 +298,10 @@ async function persistMetadataPreviews(directory: string, clientMessageId: strin
 
 function documentAttachment(name: string, type = "") {
     return ["application/pdf", "application/json", "text/plain", "text/markdown"].includes(type.toLowerCase()) || /\.(?:pdf|txt|md|markdown|json)$/i.test(name);
+}
+
+function nonImageAttachment(name: string, type = "") {
+    return documentAttachment(name, type) || type.toLowerCase().startsWith("video/") || /\.(?:mp4|mov|m4v|webm|mkv|avi)$/i.test(name);
 }
 
 async function persistImagePreview(directory: string, clientMessageId: string, key: string, value: string) {

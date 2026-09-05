@@ -9,7 +9,7 @@ import { compactCanvasState, compactNode, isToolName, parseToolInput } from "./t
 import type { CanvasSnapshot } from "./types.js";
 
 type PendingRequest = { clientId: string; resolve: (value: unknown) => void; reject: (error: Error) => void };
-type TurnAttachment = { clientId: string; id: string; name: string; type: string; size: number; width: number; height: number; dataUrl: string };
+type TurnAttachment = { clientId: string; id: string; name: string; type: string; kind: "image" | "video"; size: number; width: number; height: number; dataUrl: string };
 type ReplayEvent = { type: string; payload: Record<string, unknown> };
 export type CodexState = { busy: boolean; threadId: string; turnId: string };
 export type McpStartupState = "starting" | "ready" | "failed" | "cancelled";
@@ -23,7 +23,7 @@ export type ConversationState = {
     error?: string;
 };
 type McpInventoryItem = { name: string; authStatus?: string };
-export const AGENT_PROTOCOL_VERSION = 7;
+export const AGENT_PROTOCOL_VERSION = 8;
 
 const SITE_TOOLS = new Set<ToolName>([
     "site_navigate",
@@ -340,24 +340,26 @@ export class CanvasSession {
         logger.debug("Canvas client released from turn", { clientId });
     }
 
-    /** 保存当前 turn 可用的图片附件并返回安全引用。 */
+    /** 保存当前 turn 可用的图片或视频附件并返回安全引用。 */
     setTurnAttachments(clientId: string, attachments: AgentAttachment[]) {
         this.turnAttachments.clear();
         return attachments.flatMap((item, index) => {
-            if (!item.dataUrl?.startsWith("data:image/")) return [];
+            const kind = item.dataUrl?.startsWith("data:image/") ? "image" : item.dataUrl?.startsWith("data:video/") ? "video" : null;
+            if (!kind) return [];
             const id = item.id?.trim() || `attachment-${crypto.randomUUID()}`;
             const attachment: TurnAttachment = {
                 clientId,
                 id,
-                name: item.name?.trim() || `图片 ${index + 1}`,
-                type: item.type?.startsWith("image/") ? item.type : item.dataUrl.match(/^data:([^;]+)/)?.[1] || "image/png",
+                name: item.name?.trim() || `${kind === "image" ? "图片" : "视频"} ${index + 1}`,
+                type: item.type?.startsWith(`${kind}/`) ? item.type : item.dataUrl.match(/^data:([^;]+)/)?.[1] || (kind === "image" ? "image/png" : "video/mp4"),
+                kind,
                 size: positiveNumber(item.size, 0),
-                width: positiveNumber(item.width, 1024),
-                height: positiveNumber(item.height, 1024),
+                width: positiveNumber(item.width, kind === "image" ? 1024 : 1280),
+                height: positiveNumber(item.height, kind === "image" ? 1024 : 720),
                 dataUrl: item.dataUrl,
             };
             this.turnAttachments.set(id, attachment);
-            return [{ id, name: attachment.name, type: attachment.type, size: attachment.size, width: attachment.width, height: attachment.height }];
+            return [{ id, name: attachment.name, type: attachment.type, kind: attachment.kind, size: attachment.size, width: attachment.width, height: attachment.height }];
         });
     }
 
@@ -368,11 +370,11 @@ export class CanvasSession {
         });
     }
 
-    /** 获取属于指定网页 turn 的图片附件。 */
+    /** 获取属于指定网页 turn 的图片或视频附件。 */
     getTurnAttachment(clientId: string, attachmentId: string) {
         const attachment = this.turnAttachments.get(attachmentId);
-        if (!attachment) throw new Error(`找不到本轮图片附件：${attachmentId}`);
-        if (attachment.clientId !== clientId) throw new Error("图片附件不属于当前 turn 的发起标签页");
+        if (!attachment) throw new Error(`找不到本轮媒体附件：${attachmentId}`);
+        if (attachment.clientId !== clientId) throw new Error("媒体附件不属于当前 turn 的发起标签页");
         return attachment;
     }
 
@@ -463,7 +465,7 @@ export class CanvasSession {
         return await this.requestCanvasTool(request.name, request.input);
     }
 
-    /** 将当前 turn 的附件转换为画布图片节点。 */
+    /** 将当前 turn 的附件转换为画布图片或视频节点。 */
     private async createAttachmentNodes(input: { attachmentIds: string[]; x?: number; y?: number; gap?: number; direction?: "row" | "column" }) {
         const clientId = this.targetClientId;
         if (!this.clients.has(clientId)) throw new Error("当前没有已连接画布");
@@ -477,8 +479,9 @@ export class CanvasSession {
         const nodes = attachments.map((attachment) => {
             const size = fitAttachmentNodeSize(attachment.width, attachment.height);
             const node = {
-                id: `image-${crypto.randomUUID()}`,
+                id: `${attachment.kind}-${crypto.randomUUID()}`,
                 attachmentId: attachment.id,
+                kind: attachment.kind,
                 title: attachment.name,
                 ...(explicit
                     ? { position: { x: direction === "row" ? x + offset : x, y: direction === "column" ? y + offset : y } }
@@ -490,7 +493,7 @@ export class CanvasSession {
             return node;
         });
         await this.requestCanvasTool("canvas_create_attachment_nodes", { nodes });
-        return { nodes: nodes.map(({ id, attachmentId, title }) => ({ id, attachmentId, title })) };
+        return { nodes: nodes.map(({ id, attachmentId, kind, title }) => ({ id, attachmentId, kind, title })) };
     }
 
     /** 向目标网页发送工具请求并等待调用结果。 */

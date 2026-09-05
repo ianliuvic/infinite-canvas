@@ -197,7 +197,7 @@ export function startHttpServer() {
     app.get("/agent/attachments/:attachmentId", route(async (req, res) => {
         const attachment = session.getTurnAttachment(String(req.query.clientId || ""), routeParam(req.params.attachmentId));
         const data = attachment.dataUrl.split(",", 2)[1];
-        if (!data) throw new Error("图片附件内容无效");
+        if (!data) throw new Error("媒体附件内容无效");
         res.setHeader("Cache-Control", "no-store");
         res.type(attachment.type).send(Buffer.from(data, "base64"));
     }));
@@ -381,7 +381,7 @@ export function startHttpServer() {
         const effort = reasoningEffort(req.body?.effort);
         const skill = req.body?.skill === undefined ? undefined : await resolveCodexSkill(emit, workspace.workspacePath, skillSelector(req.body.skill), true);
         const messageId = String(req.body?.messageId || Date.now());
-        const messageText = String(req.body?.messageText || prompt || `发送了 ${attachments.length} 张图片`);
+        const messageText = String(req.body?.messageText || prompt || `发送了 ${attachments.length} 个附件`);
         const messageMetadata = await messageMetadataStore.recordPending(messageId, req.body?.messageMetadata);
         let threadId = activeThreadId;
         logger.info("Codex turn accepted", { threadId: req.body?.threadId, model: model || "default", reasoningEffort: effort || "default", promptLength: prompt.length, attachmentCount: attachments.length });
@@ -390,7 +390,7 @@ export function startHttpServer() {
         session.setCodexState({ busy: true, threadId, turnId: "" });
         try {
             let turnId = "";
-            const attachmentRefs = session.setTurnAttachments(clientId, attachments.filter((item) => String(item.type || "").startsWith("image/") || String(item.dataUrl || "").startsWith("data:image/")));
+            const attachmentRefs = session.setTurnAttachments(clientId, attachments.filter((item) => /^(?:image|video)\//.test(String(item.type || "")) || /^data:(?:image|video)\//.test(String(item.dataUrl || ""))));
             session.emitThread("chat_message", threadId, {
                 sourceClientId: clientId,
                 message: { id: `${threadId}:pending:synthetic:user`, itemId: "synthetic:user", clientMessageId: messageId, threadId, turnId: "", role: "user", text: messageText, ...messageMetadata },
@@ -633,9 +633,9 @@ function safeEqual(left: string, right: string) {
     return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/** 向 Agent 提示词追加本轮图片附件引用说明。 */
-function withAttachmentContext(prompt: string, attachments: Array<{ id: string; name: string }>) {
+/** 向 Agent 提示词追加本轮媒体附件引用说明。 */
+function withAttachmentContext(prompt: string, attachments: Array<{ id: string; name: string; kind?: string }>) {
     if (!attachments.length) return prompt;
-    const list = attachments.map((item, index) => `${index + 1}. attachmentId=${item.id}, name=${JSON.stringify(item.name)}`).join("\n");
-    return `${prompt}\n\n本轮可用图片附件（顺序与图片输入一致）：\n${list}\n创建人物、产品等实体资产时，把对应 attachmentId 直接传给 entities_add.attachments，工具会自动将图片持久化并加入实体成员；不要只创建文字档案。向已有实体补充图片时先用 entities_search 找到 entityId，再把 attachmentId 传给 entities_update.attachments。需要把附件直接放入画布或作为一次性生成参考图时，调用 canvas_create_attachment_nodes，再使用返回的画布节点 ID 创建生成流程。`;
+    const list = attachments.map((item, index) => `${index + 1}. attachmentId=${item.id}, kind=${item.kind || "image"}, name=${JSON.stringify(item.name)}`).join("\n");
+    return `${prompt}\n\n本轮可用图片或视频附件：\n${list}\n需要把原始附件直接放入画布时，调用 canvas_create_attachment_nodes；视频会创建为可播放的视频节点。只有图片附件可以作为 entities_add/entities_update 的实体图片或生成参考图。`;
 }

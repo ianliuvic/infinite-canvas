@@ -479,7 +479,9 @@ function displayUserText(text: string) {
     const marker = "用户请求：";
     const index = value.lastIndexOf(marker);
     const prompt = index >= 0 ? value.slice(index + marker.length) : value;
-    return prompt.split("\n\n本轮可用图片附件（顺序与图片输入一致）：", 1)[0].trim();
+    const contextMarkers = ["\n\n本轮可用图片附件（顺序与图片输入一致）：", "\n\n本轮可用图片或视频附件：", "\n\n本轮用户上传了以下文本或 PDF 文件", "\n\n本轮用户上传了以下视频"];
+    const contextIndex = Math.min(...contextMarkers.map((item) => prompt.indexOf(item)).filter((item) => item >= 0), prompt.length);
+    return prompt.slice(0, contextIndex).trim();
 }
 
 /** 将未知值转换为数组。 */
@@ -597,7 +599,7 @@ function toolInputRows(tool: string, input: unknown) {
     if (tool === "prompts_search") return [textRow("搜索内容", field(input, "query"))].filter(Boolean);
     if (tool === "canvas_create_text_node") return [textRow("文本内容", field(input, "text"))].filter(Boolean);
     if (tool === "canvas_apply_ops") return [textRow("操作内容", summarizeCanvasOps(arrayValue(field(input, "ops"))))].filter(Boolean);
-    if (tool === "canvas_create_attachment_nodes") return [textRow("图片数量", arrayValue(field(input, "attachmentIds")).length)].filter(Boolean);
+    if (tool === "canvas_create_attachment_nodes") return [textRow("附件数量", arrayValue(field(input, "attachmentIds")).length)].filter(Boolean);
     return [];
 }
 
@@ -714,7 +716,7 @@ function toolName(name: string) {
     if (name === "canvas_get_selection") return "读取选区";
     if (name === "canvas_export_snapshot") return "导出快照";
     if (name === "canvas_create_node") return "创建节点";
-    if (name === "canvas_create_attachment_nodes") return "添加附件图片";
+    if (name === "canvas_create_attachment_nodes") return "添加附件媒体";
     if (name === "canvas_create_text_node") return "创建文本";
     if (name === "canvas_create_text_nodes") return "批量创建文本";
     if (name === "canvas_create_config_node") return "创建生成配置";

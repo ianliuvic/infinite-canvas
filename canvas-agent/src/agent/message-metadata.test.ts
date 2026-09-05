@@ -34,6 +34,15 @@ test("message preview assets survive restarts and are deleted with their thread"
     assert.equal(await fixture.reopen().readAsset(match[1], match[2]), undefined);
 });
 
+test("video attachment metadata survives Agent restarts without persisting its payload", async (context) => {
+    const fixture = await createFixture(context);
+    await fixture.store.recordPending("message-video", { attachments: [{ id: "video-1", name: "demo.mp4", type: "video/mp4", size: 1234, width: 1080, height: 1920 }] });
+    await fixture.store.bindTurn("message-video", "thread-1", "turn-video");
+
+    const [message] = await fixture.reopen().mergeThread("thread-1", [{ role: "user", threadId: "thread-1", turnId: "turn-video", text: "分析视频" }]);
+    assert.deepEqual(message.attachments, [{ id: "video-1", name: "demo.mp4", type: "video/mp4", size: 1234, width: 1080, height: 1920 }]);
+});
+
 test("deleting a thread only removes its metadata", async (context) => {
     const fixture = await createFixture(context);
     for (const number of [1, 2]) {

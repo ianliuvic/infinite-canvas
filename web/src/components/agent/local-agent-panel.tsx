@@ -9,12 +9,13 @@ import i18n from "@/i18n";
 import { readAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
-import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
+import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { resolveCanvasReferenceImages } from "@/lib/canvas/canvas-resource-references";
 import { readImageMeta } from "@/lib/image-utils";
 import { randomId } from "@/lib/utils";
 import { uploadImage } from "@/services/image-storage";
+import { uploadMediaFile } from "@/services/file-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useShallow } from "zustand/react/shallow";
@@ -74,7 +75,7 @@ const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
 const MESSAGE_PREVIEW_LONG_EDGE = 192;
 const MESSAGE_PREVIEW_MAX_LENGTH = 500_000;
 const DEFAULT_AGENT_URL = CANVAS_AGENT_URL;
-const AGENT_PROTOCOL_VERSION = 7;
+const AGENT_PROTOCOL_VERSION = 8;
 const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
 const AGENT_REASONING_EFFORTS = new Set<AgentReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const rt = (key: string, options?: Record<string, unknown>) => i18n.t(`agent.runtime.${key}`, options);
@@ -786,11 +787,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const next = await Promise.all(
                 accepted.slice(0, Math.max(0, MAX_ATTACHMENTS - prev.length)).map(async (file) => {
                     const dataUrl = await readDataUrl(file);
-                    const image = file.type.startsWith("image/");
-                    const meta = image ? await readImageMeta(dataUrl) : { width: 0, height: 0 };
+                    const type = normalizedAttachmentType(file);
+                    const image = type.startsWith("image/");
                     const url = URL.createObjectURL(file);
+                    const meta = image ? await readImageMeta(dataUrl) : type.startsWith("video/") ? await readVideoAttachmentMeta(url) : { width: 0, height: 0 };
                     attachmentUrlsRef.current.add(url);
-                    return { id: createId(), name: file.name, type: normalizedAttachmentType(file), size: file.size, width: meta.width, height: meta.height, url, dataUrl };
+                    return { id: createId(), name: file.name, type, size: file.size, width: meta.width, height: meta.height, url, dataUrl };
                 }),
             );
             const merged = [...prev, ...next];
@@ -1569,7 +1571,7 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
     if (!nodes.length) throw new Error(rt("noImageAttachments"));
     return await Promise.all(
         nodes.map(async (value) => {
-            const item = value as { id?: unknown; attachmentId?: unknown; title?: unknown; position?: unknown; autoPosition?: unknown; autoOffset?: unknown };
+            const item = value as { id?: unknown; attachmentId?: unknown; kind?: unknown; title?: unknown; position?: unknown; autoPosition?: unknown; autoOffset?: unknown };
             const id = String(item.id || "");
             const attachmentId = String(item.attachmentId || "");
             if (!id || !attachmentId) throw new Error(rt("invalidAttachmentNode"));
@@ -1581,20 +1583,23 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
                 const body = (await res.json().catch(() => null)) as { error?: string } | null;
                 throw new Error(body?.error || rt("attachmentReadFailed"));
             }
-            const image = await uploadImage(await res.blob());
-            const size = fitNodeSize(image.width, image.height);
+            const blob = await res.blob();
+            const video = item.kind === "video" || blob.type.startsWith("video/");
+            const media = video ? await uploadMediaFile(blob, "video") : await uploadImage(blob);
+            const size = fitNodeSize(media.width || 1280, media.height || 720);
+            const metadata = video ? videoMetadata(media as Awaited<ReturnType<typeof uploadMediaFile>>) : imageMetadata(media as Awaited<ReturnType<typeof uploadImage>>);
             const position = item.position && typeof item.position === "object" ? (item.position as { x?: unknown; y?: unknown }) : {};
             return {
                 type: "add_node" as const,
                 id,
-                nodeType: "image" as const,
+                nodeType: video ? "video" as const : "image" as const,
                 title: String(item.title || rt("referenceImage")),
                 ...(item.autoPosition
                     ? { autoPosition: true, autoOffset: item.autoOffset && typeof item.autoOffset === "object" ? item.autoOffset as { x: number; y: number } : undefined }
                     : { position: { x: Number(position.x) || 0, y: Number(position.y) || 0 } }),
                 width: size.width,
                 height: size.height,
-                metadata: imageMetadata(image),
+                metadata,
             };
         }),
     );
@@ -1625,15 +1630,30 @@ async function createMessageAttachmentMetadata(item: AgentAttachment) {
 }
 
 function isSupportedAgentAttachment(file: File) {
-    return file.type.startsWith("image/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json)$/i.test(file.name);
+    return file.type.startsWith("image/") || file.type.startsWith("video/") || ["application/pdf", "text/plain", "text/markdown", "application/json"].includes(file.type) || /\.(?:pdf|txt|md|markdown|json|mp4|mov|m4v|webm|mkv|avi)$/i.test(file.name);
 }
 
 function normalizedAttachmentType(file: File) {
     if (file.type) return file.type;
+    if (/\.(?:mov|m4v)$/i.test(file.name)) return "video/quicktime";
+    if (/\.webm$/i.test(file.name)) return "video/webm";
+    if (/\.mkv$/i.test(file.name)) return "video/x-matroska";
+    if (/\.avi$/i.test(file.name)) return "video/x-msvideo";
+    if (/\.mp4$/i.test(file.name)) return "video/mp4";
     if (/\.pdf$/i.test(file.name)) return "application/pdf";
     if (/\.json$/i.test(file.name)) return "application/json";
     if (/\.(?:md|markdown)$/i.test(file.name)) return "text/markdown";
     return "text/plain";
+}
+
+function readVideoAttachmentMeta(url: string) {
+    return new Promise<{ width: number; height: number }>((resolve) => {
+        const video = document.createElement("video");
+        const done = () => resolve({ width: video.videoWidth || 1280, height: video.videoHeight || 720 });
+        video.onloadedmetadata = done;
+        video.onerror = done;
+        video.src = url;
+    });
 }
 
 function clamp(value: number, min: number, max: number) {
