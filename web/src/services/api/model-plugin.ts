@@ -158,6 +158,9 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         if (axios.isCancel(error)) throw error;
+        // Preserve Axios response bodies so the outer API layer can surface the
+        // provider's validation message instead of reducing it to a status code.
+        if (axios.isAxiosError(error)) throw error;
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(i18n.t("modelPlugin.executionFailed", { message }));
     }

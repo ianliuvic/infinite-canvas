@@ -177,7 +177,11 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
-    const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
+    // Persisted blob: URLs only belong to the browser session that created
+    // them. Prefer the durable storage key whenever one exists, then fall back
+    // to the current-session URL for images that have not been persisted.
+    const storedUrl = image.storageKey ? await resolveImageUrl(image.storageKey) : "";
+    const url = storedUrl || image.dataUrl || image.url || "";
     if (!url || url.startsWith("data:")) return url;
     return blobToDataUrl(await fetchImageBlob(url, options));
 }

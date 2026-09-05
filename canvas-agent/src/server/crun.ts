@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 
+import { logger } from "../utils/logger.js";
+
 type CrunCapability = "image" | "video" | "audio";
 type CrunCatalogModel = {
     model?: string;
@@ -62,25 +64,30 @@ export async function generateWithCrun(body: CrunGenerateInput) {
     if (!model || !capability) throw new CrunHttpError(400, "Crun model and capability are required");
     if (!prompt) throw new CrunHttpError(400, "Prompt is required");
 
-    const schemaResponse = await crunRequest("GET", `/api/v1/client/job/Models/${modelPath(model)}`);
+    const schemaResponse = await crunStage("model schema", () => crunRequest("GET", `/api/v1/client/job/Models/${modelPath(model)}`));
     const schema = findInputSchema(schemaResponse);
     const references = [
         ...(body.images || []).map((value) => ({ value, kind: "image" })),
         ...(body.videos || []).map((value) => ({ value, kind: "video" })),
         ...(body.audios || []).map((value) => ({ value, kind: "audio" })),
     ];
-    const uploaded = await Promise.all(references.map(async ({ value, kind }) => ({ kind, url: await ensureRemoteMedia(value) })));
+    const uploaded: Array<{ kind: string; url: string }> = [];
+    for (const [index, reference] of references.entries()) {
+        const label = `reference ${reference.kind} ${index + 1}`;
+        const url = await crunStage(`${label} upload`, () => ensureRemoteMedia(reference.value, reference.kind));
+        uploaded.push({ kind: reference.kind, url });
+    }
     const input = buildModelInput(schema, { capability, prompt, params: body.params || {}, media: uploaded });
 
-    const estimate = await crunRequest("POST", "/api/v1/client/job/EstimateTask", { model, input });
+    const estimate = await crunStage("task estimate", () => crunRequest("POST", "/api/v1/client/job/EstimateTask", { model, input }));
     if (estimate && typeof estimate === "object" && (estimate as Record<string, unknown>).affordable === false) {
         throw new CrunHttpError(402, "Crun credits are insufficient for this generation");
     }
     // CreateTask is deliberately called exactly once: retrying could create a duplicate charged task.
-    const created = await crunRequest("POST", "/api/v1/client/job/CreateTask", { model, input }, false) as Record<string, unknown>;
+    const created = await crunStage("task creation", () => crunRequest("POST", "/api/v1/client/job/CreateTask", { model, input }, false)) as Record<string, unknown>;
     const taskId = String(created.task_id || "");
     if (!taskId) throw new CrunHttpError(502, "Crun did not return a task ID");
-    const completed = await waitForTask(taskId);
+    const completed = await crunStage("task execution", () => waitForTask(taskId));
     const result = completed.result && typeof completed.result === "object" ? completed.result as Record<string, unknown> : {};
     const mediaUrls = Array.isArray(result.media_urls) ? result.media_urls.filter((value): value is string => typeof value === "string" && Boolean(value)) : [];
     if (!mediaUrls.length) throw new CrunHttpError(502, String(result.message || completed.message || "Crun completed without a media URL"));
@@ -134,7 +141,9 @@ async function crunRequest(method: "GET" | "POST", path: string, body?: unknown,
             await delay(500 * 2 ** attempt);
             continue;
         }
-        throw new CrunHttpError(response.status || 502, String(payload.message || `Crun request failed (${response.status})`), payload.data);
+        const message = crunErrorMessage(payload, response.status);
+        logger.warn("Crun API request failed", { method, path: path.split("?", 1)[0], status: response.status, code: payload.code, message });
+        throw new CrunHttpError(response.status || 502, message, payload.data ?? payload.detail);
     }
     throw new CrunHttpError(502, "Crun request failed");
 }
@@ -154,19 +163,45 @@ async function waitForTask(taskId: string) {
     }
 }
 
-async function ensureRemoteMedia(value: string) {
+async function ensureRemoteMedia(value: string, kind: string) {
     if (/^https?:\/\//i.test(value)) return value;
-    const match = /^data:([^;,]+);base64,(.+)$/s.exec(value);
+    const match = /^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/s.exec(value);
     if (!match) throw new CrunHttpError(400, "Reference media must be an HTTP URL or base64 data URL");
-    const contentType = match[1];
+    let contentType = match[1].split(";", 1)[0].trim().toLowerCase();
+    const data = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+    if (!data.length) throw new CrunHttpError(400, "Reference media is empty");
+    if (contentType === "application/octet-stream" && kind === "image") contentType = sniffImageContentType(data) || contentType;
+    if (!contentType.startsWith(`${kind}/`)) throw new CrunHttpError(400, `Reference ${kind} has incompatible content type ${contentType}`);
     const extension = mediaExtension(contentType);
+    if (extension === ".bin") throw new CrunHttpError(400, `Reference ${kind} content type ${contentType} is not supported`);
     const upload = await crunRequest("GET", `/api/v1/client/files/upload-url?content_type=${encodeURIComponent(contentType)}&ext=${encodeURIComponent(extension)}`) as Record<string, unknown>;
     const presignedUrl = String(upload.presigned_url || "");
     const fileUrl = String(upload.file_url || "");
     if (!presignedUrl || !fileUrl) throw new CrunHttpError(502, "Crun did not return a media upload URL");
-    const response = await fetch(presignedUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: Buffer.from(match[2], "base64"), signal: AbortSignal.timeout(120_000) });
+    const response = await fetch(presignedUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: data, signal: AbortSignal.timeout(120_000) });
     if (!response.ok) throw new CrunHttpError(502, `Reference media upload failed (${response.status})`);
     return fileUrl;
+}
+
+async function crunStage<T>(stage: string, action: () => Promise<T>) {
+    try {
+        return await action();
+    } catch (error) {
+        if (error instanceof CrunHttpError) throw new CrunHttpError(error.status, `Crun ${stage} failed: ${error.message}`, error.details);
+        throw error;
+    }
+}
+
+function crunErrorMessage(payload: Record<string, unknown>, status: number) {
+    const error = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error) ? payload.error as Record<string, unknown> : {};
+    for (const value of [payload.message, payload.msg, typeof payload.error === "string" ? payload.error : error.message, payload.detail]) {
+        if (typeof value === "string" && value.trim()) return value.trim();
+        if (value && typeof value === "object") {
+            const serialized = JSON.stringify(value);
+            if (serialized && serialized !== "{}" && serialized !== "[]") return serialized.slice(0, 1000);
+        }
+    }
+    return `Crun request failed (${status})`;
 }
 
 function findInputSchema(value: unknown): Record<string, unknown> | null {
@@ -354,10 +389,21 @@ function mediaExtension(contentType: string) {
     if (contentType === "image/jpeg") return ".jpg";
     if (contentType === "image/png") return ".png";
     if (contentType === "image/webp") return ".webp";
+    if (contentType === "image/gif") return ".gif";
     if (contentType === "video/mp4") return ".mp4";
+    if (contentType === "video/webm") return ".webm";
     if (contentType === "audio/mpeg") return ".mp3";
     if (contentType === "audio/wav") return ".wav";
+    if (contentType === "audio/ogg") return ".ogg";
     return ".bin";
+}
+
+function sniffImageContentType(data: Buffer) {
+    if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
+    if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+    if (data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+    if (data.length >= 6 && ["GIF87a", "GIF89a"].includes(data.subarray(0, 6).toString("ascii"))) return "image/gif";
+    return "";
 }
 
 function delay(ms: number) {
