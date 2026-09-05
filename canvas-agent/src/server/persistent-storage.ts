@@ -39,30 +39,30 @@ export class PersistentStorage {
         return row ? { value: row.value, revision: Number(row.revision), updatedAt: row.updated_at.toISOString() } : null;
     }
 
-    async putState(key: string, value: string) {
+    async putState(key: string, value: string, expectedRevision: number) {
         await this.ensureState();
         const client = await this.pool!.connect();
         try {
             await client.query("BEGIN");
-            await client.query(
-                `INSERT INTO canvas_app_state_versions (storage_key, value, revision)
-                 SELECT storage_key, value, revision FROM canvas_app_state current
-                 WHERE storage_key = $1
-                   AND NOT EXISTS (
-                       SELECT 1 FROM canvas_app_state_versions history
-                       WHERE history.storage_key = current.storage_key
-                         AND history.created_at > NOW() - INTERVAL '${VERSION_INTERVAL}'
-                   )`,
-                [key],
-            );
-            const result = await client.query<{ revision: string; updated_at: Date }>(
-                `INSERT INTO canvas_app_state (storage_key, value)
-                 VALUES ($1, $2)
-                 ON CONFLICT (storage_key) DO UPDATE
-                 SET value = EXCLUDED.value, revision = canvas_app_state.revision + 1, updated_at = NOW()
-                 RETURNING revision, updated_at`,
-                [key, value],
-            );
+            const current = await client.query<{ value: string; revision: string }>("SELECT value, revision FROM canvas_app_state WHERE storage_key = $1 FOR UPDATE", [key]);
+            const currentRevision = current.rows[0] ? Number(current.rows[0].revision) : 0;
+            if (currentRevision !== expectedRevision) throw new StorageConflictError(currentRevision);
+            if (current.rows[0]) {
+                await client.query(
+                    `INSERT INTO canvas_app_state_versions (storage_key, value, revision)
+                     SELECT storage_key, value, revision FROM canvas_app_state current
+                     WHERE storage_key = $1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM canvas_app_state_versions history
+                           WHERE history.storage_key = current.storage_key
+                             AND history.created_at > NOW() - INTERVAL '${VERSION_INTERVAL}'
+                       )`,
+                    [key],
+                );
+            }
+            const result = current.rows[0]
+                ? await client.query<{ revision: string; updated_at: Date }>("UPDATE canvas_app_state SET value = $2, revision = revision + 1, updated_at = NOW() WHERE storage_key = $1 RETURNING revision, updated_at", [key, value])
+                : await client.query<{ revision: string; updated_at: Date }>("INSERT INTO canvas_app_state (storage_key, value) VALUES ($1, $2) RETURNING revision, updated_at", [key, value]);
             await client.query("COMMIT");
             const row = result.rows[0];
             return { revision: Number(row.revision), updatedAt: row.updated_at.toISOString() };
@@ -74,9 +74,13 @@ export class PersistentStorage {
         }
     }
 
-    async deleteState(key: string) {
+    async deleteState(key: string, expectedRevision: number) {
         await this.ensureState();
-        await this.pool!.query("DELETE FROM canvas_app_state WHERE storage_key = $1", [key]);
+        const result = await this.pool!.query<{ revision: string }>("DELETE FROM canvas_app_state WHERE storage_key = $1 AND revision = $2 RETURNING revision", [key, expectedRevision]);
+        if (!result.rows[0] && expectedRevision !== 0) {
+            const current = await this.pool!.query<{ revision: string }>("SELECT revision FROM canvas_app_state WHERE storage_key = $1", [key]);
+            throw new StorageConflictError(current.rows[0] ? Number(current.rows[0].revision) : 0);
+        }
     }
 
     async putObject(key: string, data: Buffer, contentType: string) {
@@ -135,6 +139,14 @@ export class PersistentStorage {
 
 export class StorageNotConfiguredError extends Error {
     readonly statusCode = 503;
+}
+
+export class StorageConflictError extends Error {
+    readonly statusCode = 409;
+
+    constructor(readonly currentRevision: number) {
+        super(`Remote state changed (current revision ${currentRevision}); refusing stale overwrite`);
+    }
 }
 
 function objectKey(key: string) {

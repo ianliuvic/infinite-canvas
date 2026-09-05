@@ -15,7 +15,7 @@ import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
 import { CrunHttpError, describeCrunCanvasModel, generateWithCrun, listCrunCanvasModels } from "./crun.js";
-import { PersistentStorage, StorageNotConfiguredError } from "./persistent-storage.js";
+import { PersistentStorage, StorageConflictError, StorageNotConfiguredError } from "./persistent-storage.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -154,10 +154,14 @@ export function startHttpServer() {
     app.put("/storage/state/:key", route(async (req, res) => {
         const value = typeof req.body?.value === "string" ? req.body.value : "";
         if (!value) return void res.status(400).json({ ok: false, error: "state value is required" });
-        res.json({ ok: true, ...(await persistentStorage.putState(storageKey(req.params.key), value)) });
+        const expectedRevision = Number(req.body?.expectedRevision);
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) return void res.status(400).json({ ok: false, error: "expectedRevision is required" });
+        res.json({ ok: true, ...(await persistentStorage.putState(storageKey(req.params.key), value, expectedRevision)) });
     }));
     app.delete("/storage/state/:key", route(async (req, res) => {
-        await persistentStorage.deleteState(storageKey(req.params.key));
+        const expectedRevision = Number(req.body?.expectedRevision);
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) return void res.status(400).json({ ok: false, error: "expectedRevision is required" });
+        await persistentStorage.deleteState(storageKey(req.params.key), expectedRevision);
         res.json({ ok: true });
     }));
     app.put("/storage/objects/:key", express.raw({ type: "application/octet-stream", limit: "35mb" }), route(async (req, res) => {
@@ -493,7 +497,7 @@ export function startHttpServer() {
     app.use((_req, res) => res.status(404).json({ ok: false, error: "not found" }));
     app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
         logger.error("HTTP request failed", { method: req.method, path: req.path, error });
-        if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError || error instanceof StorageNotConfiguredError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
+        if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError || error instanceof StorageNotConfiguredError || error instanceof StorageConflictError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
         res.status(500).json({ ok: false, error: error.message });
     });
 
