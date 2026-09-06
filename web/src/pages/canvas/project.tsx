@@ -20,6 +20,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildEntityCanvasPlacement } from "@/lib/canvas/entity-canvas";
+import { arrangeCanvasNodes, viewportForNodes } from "@/lib/canvas/canvas-auto-layout";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
@@ -233,6 +234,7 @@ function InfiniteCanvasPage() {
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
+    const [arrangingNodes, setArrangingNodes] = useState(false);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -1070,6 +1072,29 @@ function InfiniteCanvasPage() {
         setViewport({ x: size.width / 2, y: size.height / 2, k: 1 });
         setContextMenu(null);
     }, [size.height, size.width]);
+
+    const arrangeNodes = useCallback(async () => {
+        if (arrangingNodes || nodesRef.current.length < 2) return;
+        setArrangingNodes(true);
+        try {
+            const scope = selectedNodeIdsRef.current.size > 1 ? new Set(selectedNodeIdsRef.current) : undefined;
+            const nextNodes = await arrangeCanvasNodes(nodesRef.current, connectionsRef.current, scope);
+            nodesRef.current = nextNodes;
+            setNodes(nextNodes);
+            const nextViewport = viewportForNodes(nextNodes, size);
+            if (nextViewport) {
+                viewportRef.current = nextViewport;
+                setViewport(nextViewport);
+            }
+            setContextMenu(null);
+            message.success(t(scope ? "canvas.arrangedSelection" : "canvas.arrangedCanvas"));
+        } catch (error) {
+            console.error(error);
+            message.error(t("canvas.arrangeFailed"));
+        } finally {
+            setArrangingNodes(false);
+        }
+    }, [arrangingNodes, message, size, t]);
 
     const focusNode = useCallback(
         (nodeId: string) => {
@@ -3329,6 +3354,8 @@ function InfiniteCanvasPage() {
                     canvasTool={canvasTool}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
+                    canArrange={nodes.length > 1}
+                    arranging={arrangingNodes}
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
                     onAddImage={() => createNode(CanvasNodeType.Image)}
@@ -3340,6 +3367,7 @@ function InfiniteCanvasPage() {
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
+                    onArrange={() => void arrangeNodes()}
                     onUpload={() => handleUploadRequest()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}

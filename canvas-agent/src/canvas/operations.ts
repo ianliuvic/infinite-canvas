@@ -145,8 +145,8 @@ function generationFlowOps(input: Record<string, unknown>, state: CanvasSnapshot
         && prompt.replace(/@\[node:[\w-]+\]/g, "").trim() === "";
     const tokens = reuseReferences ? referenceNodeIds.map((id) => `@[node:${id}]`) : [`@[node:${textId}]`, ...referenceNodeIds.map((id) => `@[node:${id}]`)];
     return [
-        ...(reuseReferences ? [] : [textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y, { x: -210, y: 0 })]),
-        configNodeOp(configId, { ...input, prompt: tokens.join("\n") }, x === undefined ? undefined : x + 420, y, { x: reuseReferences ? 0 : 210, y: 0 }),
+        ...(reuseReferences ? [] : [{ ...textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y), ...(referenceNodeIds.length ? { anchorNodeIds: referenceNodeIds } : {}) }]),
+        { ...configNodeOp(configId, { ...input, prompt: tokens.join("\n") }, x === undefined ? undefined : x + 420, y), ...(explicit ? {} : { anchorNodeIds: reuseReferences ? referenceNodeIds : [textId] }) },
         ...(reuseReferences ? [] : [{ type: "connect_nodes", fromNodeId: textId, toNodeId: configId }]),
         ...referenceNodeIds.map((fromNodeId) => ({ type: "connect_nodes", fromNodeId, toNodeId: configId })),
         { type: "select_nodes", ids: [configId] },

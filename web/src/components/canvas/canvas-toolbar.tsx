@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LoaderCircle, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video, Workflow } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -14,6 +14,8 @@ export function CanvasToolbar({
     canvasTool,
     canUndo,
     canRedo,
+    canArrange,
+    arranging,
     backgroundMode,
     showImageInfo,
     onAddImage,
@@ -25,6 +27,7 @@ export function CanvasToolbar({
     onAddExtensionNode,
     onUndo,
     onRedo,
+    onArrange,
     onUpload,
     onDelete,
     onClear,
@@ -36,6 +39,8 @@ export function CanvasToolbar({
     canvasTool: "select" | "pan";
     canUndo: boolean;
     canRedo: boolean;
+    canArrange: boolean;
+    arranging: boolean;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     onAddImage: () => void;
@@ -47,6 +52,7 @@ export function CanvasToolbar({
     onAddExtensionNode: (type: string) => void;
     onUndo: () => void;
     onRedo: () => void;
+    onArrange: () => void;
     onUpload: () => void;
     onDelete: () => void;
     onClear: () => void;
@@ -99,6 +105,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-redo" label={t("canvas.redo")} disabled={!canRedo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onRedo}>
                     <Redo2 className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-arrange" label={t("canvas.toolbar.arrange")} disabled={!canArrange || arranging} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onArrange}>
+                    {arranging ? <LoaderCircle className="size-4.5 animate-spin" /> : <Workflow className="size-4.5" />}
                 </ToolbarButton>
                 <Divider theme={theme} />
                 <ToolbarButton id="tool-text" label={t("canvas.toolbar.text")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddText}>
@@ -356,6 +365,7 @@ function toolLabel(id: string, t: (key: string) => string) {
     if (id === "tool-pan") return t("canvas.toolbar.pan");
     if (id === "tool-undo") return t("canvas.undo");
     if (id === "tool-redo") return t("canvas.redo");
+    if (id === "tool-arrange") return t("canvas.toolbar.arrange");
     if (id === "tool-text") return t("canvas.toolbar.text");
     if (id === "tool-image") return t("canvas.toolbar.image");
     if (id === "tool-video") return t("canvas.toolbar.video");

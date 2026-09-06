@@ -5,7 +5,7 @@ import { getNodeSpec, isRegisteredNodeType } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ViewportTransform } from "@/types/canvas";
 
 export type CanvasAgentOp =
-    | { type: "add_node"; id?: string; nodeType?: CanvasNodeTypeId; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata; autoPosition?: boolean; autoOffset?: { x: number; y: number } }
+    | { type: "add_node"; id?: string; nodeType?: CanvasNodeTypeId; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata; autoPosition?: boolean; autoOffset?: { x: number; y: number }; anchorNodeIds?: string[] }
     | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
     | { type: "delete_node"; id?: string; ids?: string[]; nodeType?: CanvasNodeTypeId }
     | { type: "delete_connections"; id?: string; ids?: string[]; all?: boolean }
@@ -51,7 +51,7 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
             const explicitPosition = op.position || (op.x !== undefined || op.y !== undefined ? { x: op.x ?? 0, y: op.y ?? 0 } : null);
             const position = explicitPosition && !op.autoPosition
                 ? explicitPosition
-                : findVisibleNodePosition(snapshot, nodes, width, height, op.autoOffset);
+                : findVisibleNodePosition(snapshot, nodes, width, height, op.autoOffset, op.anchorNodeIds);
             const node: CanvasNodeData = {
                 id: op.id || `${nodeType}-${Date.now()}-${index}`,
                 type: nodeType,
@@ -91,7 +91,7 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
     return { ...snapshot, nodes, connections, selectedNodeIds, viewport };
 }
 
-function findVisibleNodePosition(snapshot: CanvasAgentSnapshot, nodes: CanvasNodeData[], width: number, height: number, offset = { x: 0, y: 0 }) {
+function findVisibleNodePosition(snapshot: CanvasAgentSnapshot, nodes: CanvasNodeData[], width: number, height: number, offset = { x: 0, y: 0 }, anchorNodeIds?: string[]) {
     const scale = Math.max(0.05, snapshot.viewport.k || 1);
     const viewportSize = snapshot.viewportSize || { width: 1200, height: 720 };
     const left = -snapshot.viewport.x / scale;
@@ -99,25 +99,24 @@ function findVisibleNodePosition(snapshot: CanvasAgentSnapshot, nodes: CanvasNod
     const right = left + viewportSize.width / scale;
     const bottom = top + viewportSize.height / scale;
     const margin = 28 / scale;
-    const base = {
-        x: (left + right - width) / 2 + offset.x,
-        y: (top + bottom - height) / 2 + offset.y,
-    };
-    const clamp = (position: { x: number; y: number }) => ({
-        x: Math.min(Math.max(position.x, left + margin), Math.max(left + margin, right - width - margin)),
-        y: Math.min(Math.max(position.y, top + margin), Math.max(top + margin, bottom - height - margin)),
-    });
+    const anchors = nodes.filter((node) => (anchorNodeIds?.length ? anchorNodeIds : snapshot.selectedNodeIds).includes(node.id));
+    const base = anchors.length ? {
+        x: Math.max(...anchors.map((node) => node.position.x + node.width)) + 100 + offset.x,
+        y: (Math.min(...anchors.map((node) => node.position.y)) + Math.max(...anchors.map((node) => node.position.y + node.height)) - height) / 2 + offset.y,
+    } : { x: (left + right - width) / 2 + offset.x, y: (top + bottom - height) / 2 + offset.y };
     const overlaps = (position: { x: number; y: number }) => nodes.some((node) => position.x < node.position.x + node.width + 20 && position.x + width + 20 > node.position.x && position.y < node.position.y + node.height + 20 && position.y + height + 20 > node.position.y);
-    const candidates = [
-        base,
-        { x: base.x + width + 40, y: base.y },
-        { x: base.x - width - 40, y: base.y },
-        { x: base.x, y: base.y + height + 40 },
-        { x: base.x, y: base.y - height - 40 },
-        { x: base.x + width + 40, y: base.y + height + 40 },
-        { x: base.x - width - 40, y: base.y + height + 40 },
-    ].map(clamp);
-    return candidates.find((candidate) => !overlaps(candidate)) || clamp(base);
+    const stepX = width + 60;
+    const stepY = height + 60;
+    for (let ring = 0; ring < 40; ring += 1) {
+        for (let row = -ring; row <= ring; row += 1) {
+            for (let column = -ring; column <= ring; column += 1) {
+                if (Math.max(Math.abs(column), Math.abs(row)) !== ring) continue;
+                const candidate = { x: base.x + column * stepX, y: base.y + row * stepY };
+                if (!overlaps(candidate)) return candidate;
+            }
+        }
+    }
+    return { x: Math.max(left + margin, base.x), y: Math.max(top + margin, base.y) };
 }
 
 function opLabel(type: string) {
