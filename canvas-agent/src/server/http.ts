@@ -245,7 +245,7 @@ export function startHttpServer() {
             throw error;
         }
     }));
-    app.post("/agent/crun/v1/tasks", route(async (req, res) => {
+    app.post(["/agent/crun/v1/tasks", "/agent/crun/v1/v1/tasks"], route(async (req, res) => {
         try {
             res.status(202).json(submitCrunCanvasJob(req.body || {}));
         } catch (error) {
@@ -253,7 +253,7 @@ export function startHttpServer() {
             throw error;
         }
     }));
-    app.get("/agent/crun/v1/tasks/:taskId", route(async (req, res) => {
+    app.get(["/agent/crun/v1/tasks/:taskId", "/agent/crun/v1/v1/tasks/:taskId"], route(async (req, res) => {
         try {
             res.json(readCrunCanvasJob(routeParam(req.params.taskId)));
         } catch (error) {
