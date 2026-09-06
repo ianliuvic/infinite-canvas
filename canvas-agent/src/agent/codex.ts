@@ -19,6 +19,7 @@ type CodexRunOptions = { threadId?: string; cwd?: string; permissionMode?: Agent
 type CodexSkillDraftInput = { model?: string; effort?: CodexReasoningEffort } & ({ source: "conversation"; threadId: string } | { source: "canvas"; snapshot: CanvasSnapshot });
 type PreparedAttachment = { file: string; name: string; type: string; kind: "image" | "document" | "video" };
 type VideoAnalysis = { attachment: PreparedAttachment; duration: number; width: number; height: number; fps: number; codec: string; hasAudio: boolean; frames: Array<{ file: string; time: number }> };
+type CodexRunControl = { controller: AbortController; threadId: string };
 
 const execFileAsync = promisify(execFile);
 
@@ -60,6 +61,7 @@ export class CodexSkillLookupError extends Error {
 let codexQueue: Promise<unknown> = Promise.resolve();
 let codexApp: CodexAppClient | null = null;
 let codexAppStart: Promise<CodexAppClient> | null = null;
+let activeCodexRun: CodexRunControl | null = null;
 /** 仅表示最近主动加载/选择的线程；运行中的 turn 身份由 CodexAppClient 自己维护。 */
 let loadedThreadId = "";
 
@@ -68,8 +70,13 @@ export { summarizeCodexThread } from "./codex-history.js";
 /** 将 Codex turn 加入串行队列并等待执行完成。 */
 export async function runCodexTurn(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[] = [], options: CodexRunOptions = {}) {
     if (!prompt.trim()) return;
-    codexQueue = codexQueue.catch(() => undefined).then(() => runCodexTurnNow(prompt, lifecycleEmit, attachments, options));
-    await codexQueue;
+    const control: CodexRunControl = { controller: new AbortController(), threadId: options.threadId || "" };
+    activeCodexRun = control;
+    const queued = codexQueue.catch(() => undefined).then(() => runCodexTurnNow(prompt, lifecycleEmit, attachments, options, control));
+    codexQueue = queued.finally(() => {
+        if (activeCodexRun === control) activeCodexRun = null;
+    });
+    await queued;
 }
 
 /** 从当前对话或指定网页画布生成可编辑草稿，不写入 Skill 文件。 */
@@ -81,8 +88,11 @@ export async function generateCodexSkillDraft(emit: AgentEmit, cwd: string, inpu
 
 /** 中断当前线程正在执行的 Codex turn。 */
 export async function interruptCodexTurn(threadId?: string) {
-    if (!codexApp) return false;
-    return await codexApp.interruptCurrentTurn(threadId);
+    const control = activeCodexRun;
+    const ownsRun = Boolean(control && (!threadId || !control.threadId || control.threadId === threadId));
+    if (ownsRun) control!.controller.abort();
+    const interruptedTurn = codexApp ? await codexApp.interruptCurrentTurn(threadId) : false;
+    return ownsRun || interruptedTurn;
 }
 
 /** 回复当前 app-server 的待处理权限请求。 */
@@ -193,21 +203,27 @@ export function isRecoverableThreadError(error: unknown) {
 }
 
 /** 执行一次 Codex turn，并负责附件临时文件和线程恢复。 */
-async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions) {
+async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions, control: CodexRunControl) {
     let attachmentDirectory = "";
+    const signal = control.controller.signal;
     try {
         options.onStart?.();
-        const prepared = await writeAttachmentFiles(attachments, options.cwd);
+        throwIfRunAborted(signal);
+        const prepared = await writeAttachmentFiles(attachments, options.cwd, signal);
         attachmentDirectory = prepared.directory;
         const videos: VideoAnalysis[] = [];
         const videoAttachments = prepared.items.filter((item) => item.kind === "video");
         const framesPerVideo = Math.max(2, Math.floor(12 / Math.max(1, videoAttachments.length)));
-        for (const attachment of videoAttachments) videos.push(await analyzeVideo(attachment, prepared.directory, framesPerVideo));
+        for (const attachment of videoAttachments) videos.push(await analyzeVideo(attachment, prepared.directory, framesPerVideo, signal));
         const images = [...prepared.items.filter((item) => item.kind === "image").map((item) => item.file), ...videos.flatMap((item) => item.frames.map((frame) => frame.file))];
         const turnPrompt = withVideoAttachmentContext(withDocumentAttachmentContext(prompt, prepared.items.filter((item) => item.kind === "document")), videos);
+        throwIfRunAborted(signal);
         const app = await getCodexApp(options.appEmit || lifecycleEmit);
+        throwIfRunAborted(signal);
         let threadId = await ensureCodexThread(app, options, lifecycleEmit);
+        control.threadId = threadId;
         options.onThread?.(threadId);
+        throwIfRunAborted(signal);
         try {
             await app.startTurn(threadId, turnPrompt, images, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         } catch (error) {
@@ -215,12 +231,17 @@ async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachm
             lifecycleEmit("agent_log", { text: `Codex thread unavailable, starting a new thread: ${errorMessage(error)}` });
             loadedThreadId = "";
             threadId = await ensureCodexThread(app, { cwd: options.cwd }, lifecycleEmit);
+            control.threadId = threadId;
             options.onThread?.(threadId);
+            throwIfRunAborted(signal);
             await app.startTurn(threadId, turnPrompt, images, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         }
     } catch (error) {
-        logger.error("Codex turn failed", error);
-        if (!(error instanceof CodexReportedError)) lifecycleEmit("agent_error", { message: errorMessage(error) });
+        if (signal.aborted) logger.info("Codex task stopped before completion", { threadId: control.threadId || options.threadId || "" });
+        else {
+            logger.error("Codex turn failed", error);
+            if (!(error instanceof CodexReportedError)) lifecycleEmit("agent_error", { message: errorMessage(error) });
+        }
     } finally {
         options.onFinish?.();
         if (attachmentDirectory) await fs.rm(attachmentDirectory, { recursive: true, force: true }).catch(() => undefined);
@@ -500,11 +521,13 @@ function samePath(left: string, right: string) {
 }
 
 /** 将附件写入当前工作区的临时目录供 Codex 读取。 */
-async function writeAttachmentFiles(attachments: AgentAttachment[], cwd?: string) {
+async function writeAttachmentFiles(attachments: AgentAttachment[], cwd: string | undefined, signal: AbortSignal) {
+    throwIfRunAborted(signal);
     if (!attachments.length) return { directory: "", items: [] as PreparedAttachment[] };
     const directory = await fs.mkdtemp(path.join(cwd || os.tmpdir(), ".canvas-agent-attachments-"));
     try {
-        return { directory, items: await Promise.all(attachments.map((item, index) => writeAttachmentFile(item, directory, index))) };
+        throwIfRunAborted(signal);
+        return { directory, items: await Promise.all(attachments.map((item, index) => writeAttachmentFile(item, directory, index, signal))) };
     } catch (error) {
         await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined);
         throw error;
@@ -512,7 +535,8 @@ async function writeAttachmentFiles(attachments: AgentAttachment[], cwd?: string
 }
 
 /** 将单个 Data URL 附件写入临时文件。 */
-async function writeAttachmentFile(item: AgentAttachment, directory: string, index: number): Promise<PreparedAttachment> {
+async function writeAttachmentFile(item: AgentAttachment, directory: string, index: number, signal: AbortSignal): Promise<PreparedAttachment> {
+    throwIfRunAborted(signal);
     const [, meta = "", data = ""] = item.dataUrl?.match(/^data:([^;]+);base64,(.+)$/) || [];
     const type = String(item.type || meta || "application/octet-stream").toLowerCase();
     const name = String(item.name || `attachment-${index + 1}`);
@@ -522,7 +546,7 @@ async function writeAttachmentFile(item: AgentAttachment, directory: string, ind
     if (!data || !extension) throw new Error(`不支持或无效的附件：${name}`);
     const base = path.basename(name, path.extname(name)).replace(/[^\p{L}\p{N}._ -]+/gu, "_").trim().slice(0, 100) || `attachment-${index + 1}`;
     const file = path.join(directory, `${index + 1}-${base}.${extension}`);
-    await fs.writeFile(file, Buffer.from(data, "base64"));
+    await fs.writeFile(file, Buffer.from(data, "base64"), { signal });
     return { file, name, type, kind: image ? "image" : video ? "video" : "document" };
 }
 
@@ -560,38 +584,46 @@ function withDocumentAttachmentContext(prompt: string, attachments: PreparedAtta
     return `${prompt}\n\n本轮用户上传了以下文本或 PDF 文件，文件已临时放在当前工作区内。请按用户要求直接读取和处理；不要声称无法访问附件。\n${files}`;
 }
 
-async function analyzeVideo(attachment: PreparedAttachment, directory: string, maxFrames: number): Promise<VideoAnalysis> {
+async function analyzeVideo(attachment: PreparedAttachment, directory: string, maxFrames: number, signal: AbortSignal): Promise<VideoAnalysis> {
     try {
-        const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=index,codec_type,codec_name,width,height,r_frame_rate", "-of", "json", attachment.file], { maxBuffer: 1024 * 1024 });
+        throwIfRunAborted(signal);
+        const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=index,codec_type,codec_name,width,height,r_frame_rate", "-of", "json", attachment.file], { maxBuffer: 1024 * 1024, signal });
         const probe = JSON.parse(String(stdout)) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; r_frame_rate?: string }> };
         const stream = probe.streams?.find((item) => item.codec_type === "video");
         const duration = Math.max(0, Number(probe.format?.duration) || 0);
         if (!stream || !duration) throw new Error("未找到可解码的视频流或有效时长");
         const fps = parseFrameRate(stream.r_frame_rate);
-        const sceneTimes = await detectSceneTimes(attachment.file);
+        const sceneTimes = await detectSceneTimes(attachment.file, signal);
         const times = representativeFrameTimes(duration, sceneTimes, maxFrames);
         const frameDirectory = path.join(directory, `frames-${path.basename(attachment.file, path.extname(attachment.file))}`);
         await fs.mkdir(frameDirectory, { recursive: true });
         const frames: VideoAnalysis["frames"] = [];
         for (const [index, time] of times.entries()) {
+            throwIfRunAborted(signal);
             const file = path.join(frameDirectory, `${String(index + 1).padStart(2, "0")}-${time.toFixed(3)}s.jpg`);
-            await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", time.toFixed(3), "-i", attachment.file, "-frames:v", "1", "-vf", "scale=1280:-2:force_original_aspect_ratio=decrease", "-q:v", "3", "-y", file], { maxBuffer: 1024 * 1024 });
+            await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", time.toFixed(3), "-i", attachment.file, "-frames:v", "1", "-vf", "scale=1280:-2:force_original_aspect_ratio=decrease", "-q:v", "3", "-y", file], { maxBuffer: 1024 * 1024, signal });
             frames.push({ file, time });
         }
         return { attachment, duration, width: Number(stream.width) || 0, height: Number(stream.height) || 0, fps, codec: String(stream.codec_name || "unknown"), hasAudio: Boolean(probe.streams?.some((item) => item.codec_type === "audio")), frames };
     } catch (error) {
+        if (signal.aborted) throw error;
         throw new Error(`视频解析失败（${attachment.name}）：${errorMessage(error)}`);
     }
 }
 
-async function detectSceneTimes(file: string) {
+async function detectSceneTimes(file: string, signal: AbortSignal) {
     try {
-        const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-i", file, "-vf", "select=gt(scene\\,0.28),showinfo", "-an", "-f", "null", "-"], { maxBuffer: 2 * 1024 * 1024 });
+        const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-i", file, "-vf", "select=gt(scene\\,0.28),showinfo", "-an", "-f", "null", "-"], { maxBuffer: 2 * 1024 * 1024, signal });
         return [...stderr.matchAll(/pts_time:([0-9.]+)/g)].map((match) => Number(match[1])).filter(Number.isFinite);
     } catch (error) {
+        if (signal.aborted) throw error;
         const stderr = String(field(error, "stderr") || "");
         return [...stderr.matchAll(/pts_time:([0-9.]+)/g)].map((match) => Number(match[1])).filter(Number.isFinite);
     }
+}
+
+function throwIfRunAborted(signal: AbortSignal) {
+    if (signal.aborted) throw new Error("任务已停止");
 }
 
 function representativeFrameTimes(duration: number, sceneTimes: number[], maxFrames: number) {
