@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
-import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parsePixelSize } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -93,7 +93,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
-    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const refs = await preparePluginVideoReferences(model, config, await Promise.all(references.map((image) => imageToDataUrl(image))));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     let result: VideoGenerationResult;
@@ -332,6 +332,44 @@ function normalizeVideoResolution(value: string) {
     if (value === "auto" || value === "high" || value === "medium") return "720p";
     const resolution = value.replace(/p$/i, "") || "720";
     return /^\d+k$/i.test(resolution) ? resolution : `${resolution}p`;
+}
+
+/** Grok ignores aspect_ratio for a single image, so make that image carry the requested output ratio. */
+async function preparePluginVideoReferences(model: string, config: AiConfig, references: string[]) {
+    if (!modelOptionName(model).toLowerCase().startsWith("grok-imagine-video") || references.length !== 1) return references;
+    const target = parsePixelSize(normalizeVideoSize(config.size, config.vquality) || "");
+    if (!target) return references;
+    const image = await loadReferenceImage(references[0]);
+    if (Math.abs(image.naturalWidth / image.naturalHeight - target.width / target.height) < 0.01) return references;
+    const canvas = document.createElement("canvas");
+    canvas.width = target.width;
+    canvas.height = target.height;
+    const context = canvas.getContext("2d");
+    if (!context) return references;
+    const cover = Math.max(target.width / image.naturalWidth, target.height / image.naturalHeight);
+    const coverWidth = image.naturalWidth * cover;
+    const coverHeight = image.naturalHeight * cover;
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, target.width, target.height);
+    context.save();
+    context.globalAlpha = 0.18;
+    context.filter = "blur(28px)";
+    context.drawImage(image, (target.width - coverWidth) / 2, (target.height - coverHeight) / 2, coverWidth, coverHeight);
+    context.restore();
+    const contain = Math.min(target.width / image.naturalWidth, target.height / image.naturalHeight);
+    const width = image.naturalWidth * contain;
+    const height = image.naturalHeight * contain;
+    context.drawImage(image, (target.width - width) / 2, (target.height - height) / 2, width, height);
+    return [canvas.toDataURL("image/jpeg", 0.94)];
+}
+
+function loadReferenceImage(dataUrl: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(apiText("referenceImageReadFailed")));
+        image.src = dataUrl;
+    });
 }
 
 function parseProviderParams(value: string) {
