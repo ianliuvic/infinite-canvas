@@ -46,6 +46,8 @@ if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASSWORD" ]; then
 
     umask 077
     printf '%s\n' "$AUTH_PASSWORD" | htpasswd -i -c -B /etc/nginx/.htpasswd "$AUTH_USER" >/dev/null
+    chown root:nginx /etc/nginx/.htpasswd
+    chmod 640 /etc/nginx/.htpasswd
     cat > "$AUTH_CONFIG" <<'EOF'
 auth_basic "Infinite Canvas";
 auth_basic_user_file /etc/nginx/.htpasswd;
