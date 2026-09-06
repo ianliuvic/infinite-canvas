@@ -68,4 +68,8 @@ The current release needs manual verification in these areas:
 - Asset image download: opening an image that still previews in My Assets and clicking Download image should save the file. Titles with Chinese characters, spaces, or brackets such as `【】` should remain the downloaded filename and must not need renaming. Images saved from the canvas in the same session should download as well.
 - Canvas video task resume: starting an OpenAI-style video generation should store the remote task ID on the video node. After a page refresh, a still-pending video should keep polling automatically; if polling stopped, **Get task status** should resume with that task ID until the video is ready, the task fails, or the status request errors. Task failure should then allow a normal retry that creates a new generation.
 
+# Site password protection
+
+- Set both `CANVAS_AUTH_USER` and `CANVAS_AUTH_PASSWORD` in the deployment environment, then open any canvas route in a fresh private browser window. The browser should request credentials before returning HTML, static assets, runtime configuration, or `/agent/` traffic. Correct credentials should keep the canvas and Agent usable; incorrect credentials should return HTTP 401. Leaving both variables unset should preserve the original public-access behavior, while setting only one variable should stop the container with a clear configuration error.
+
 The Chinese version contains the complete item-by-item acceptance checklist.
