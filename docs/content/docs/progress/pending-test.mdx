@@ -70,6 +70,6 @@ The current release needs manual verification in these areas:
 
 # Site password protection
 
-- Set both `CANVAS_AUTH_USER` and `CANVAS_AUTH_PASSWORD` in the deployment environment, then open any canvas route in a fresh private browser window. The browser should request credentials before returning HTML, static assets, runtime configuration, or `/agent/` traffic. Correct credentials should keep the canvas and Agent usable; incorrect credentials should return HTTP 401. Leaving both variables unset should preserve the original public-access behavior, while setting only one variable should stop the container with a clear configuration error.
+- Set both `CANVAS_AUTH_USER` and `CANVAS_AUTH_PASSWORD` in the deployment environment, then open any canvas route in a fresh private browser window. The browser should request credentials before returning HTML, static assets, runtime configuration, or `/agent/` traffic. Correct credentials should keep the canvas and Agent usable; incorrect credentials should return HTTP 401. The credential-free `/healthz` endpoint should return 200 only for deployment health checks. Leaving both variables unset should preserve the original public-access behavior, while setting only one variable should stop the container with a clear configuration error.
 
 The Chinese version contains the complete item-by-item acceptance checklist.
