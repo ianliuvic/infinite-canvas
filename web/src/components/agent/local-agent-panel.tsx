@@ -349,6 +349,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;
+        let connectionEstablished = false;
         let eventQueue = Promise.resolve();
         const isCurrentConnection = () => !disposed && clientIdRef.current === clientId;
         const enqueueEvent = (task: () => void | Promise<void>) => {
@@ -375,6 +376,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (!headless) message.error(text);
                 return;
             }
+            connectionEstablished = true;
             const codex = hello?.codex;
             const busy = Boolean(codex?.busy);
             const nextThreadId = hello?.conversation?.threadId ?? hello?.workspace?.activeThreadId ?? useAgentStore.getState().activeThreadId;
@@ -571,7 +573,10 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 pendingApprovals: [],
             });
             useAgentSkillStore.getState().reset();
-            if (!wasConnected) {
+            // EventSource reconnects automatically. Only stop after an initial
+            // connection failure; a previously healthy connection may be
+            // suspended repeatedly while the browser is in the background.
+            if (!connectionEstablished) {
                 source.close();
                 setAgentState({ enabled: false });
             }
