@@ -146,6 +146,17 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
     };
 }
 
+function copyNodeMetadata(node: CanvasNodeData, idMap?: Map<string, string>) {
+    if (!node.metadata) return undefined;
+    if (node.type !== CanvasNodeType.Config) return { ...node.metadata };
+    const remap = (value?: string) => value?.replace(/@\[node:([^\]]+)\]/g, (_token, id: string) => idMap?.has(id) ? `@[node:${idMap.get(id)}]` : "").replace(/\n{3,}/g, "\n\n").trim();
+    return {
+        ...node.metadata,
+        ...(node.metadata.composerContent !== undefined ? { composerContent: remap(node.metadata.composerContent) } : {}),
+        ...(node.metadata.prompt !== undefined ? { prompt: remap(node.metadata.prompt) } : {}),
+    };
+}
+
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
 
@@ -979,6 +990,7 @@ function InfiniteCanvasPage() {
             id,
             title: `${source.title} Copy`,
             position: { x: source.position.x + 36, y: source.position.y + 36 },
+            metadata: copyNodeMetadata(source),
         };
 
         setNodes((prev) => [...prev, next]);
@@ -1023,10 +1035,10 @@ function InfiniteCanvasPage() {
         );
         const dx = center.x - (bounds.left + bounds.right) / 2;
         const dy = center.y - (bounds.top + bounds.bottom) / 2;
-        const idMap = new Map<string, string>();
-        const nextNodes = clipboard.nodes.map((node, index) => {
-            const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-            idMap.set(node.id, id);
+        const stamp = Date.now();
+        const idMap = new Map(clipboard.nodes.map((node, index) => [node.id, `${node.type}-${stamp}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
+        const nextNodes = clipboard.nodes.map((node) => {
+            const id = idMap.get(node.id)!;
             return {
                 ...node,
                 id,
@@ -1035,7 +1047,7 @@ function InfiniteCanvasPage() {
                     x: node.position.x + dx,
                     y: node.position.y + dy,
                 },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
+                metadata: copyNodeMetadata(node, idMap),
             };
         });
 

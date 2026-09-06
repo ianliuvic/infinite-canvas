@@ -96,17 +96,16 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     }
 
     nextPrompt += prompt.slice(lastIndex);
-    if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
 
-    // A media edge is an explicit reference relationship even when the
-    // composer text only contains tokens for connected text nodes. Keeping
-    // media dependent on an @ token made the UI report a connected image
-    // while silently sending an empty image list to the provider.
+    // Every connected resource remains authoritative when copied configs contain
+    // stale @node tokens. Otherwise unresolved tokens can erase valid prompt text.
     for (const resource of connectedResources) {
-        if (resource.type === "text" || labelByNodeId.has(resource.nodeId)) continue;
+        if (labelByNodeId.has(resource.nodeId)) continue;
         labelByNodeId.set(resource.nodeId, generationLabel(resource.type, counts[resource.type]++));
-        selectedInputs.push(resource);
+        if (resource.type === "text") textBlocks.push(textBlock(labelByNodeId.get(resource.nodeId)!, resource.text || ""));
+        else selectedInputs.push(resource);
     }
+    if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`.trim();
 
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
