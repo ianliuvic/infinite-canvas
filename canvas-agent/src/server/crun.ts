@@ -42,9 +42,9 @@ return result.media_urls || result.mediaUrls || [];`,
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return \`data:\${file.type || "application/octet-stream"};base64,\${btoa(binary)}\`;
 };
-const task = await http.post("/v1/tasks", { model, capability: "video", prompt, images, videos: await Promise.all(videos.map(toDataUrl)), audios: await Promise.all(audios.map(toDataUrl)), params });
+const task = await http.post("/tasks", { model, capability: "video", prompt, images, videos: await Promise.all(videos.map(toDataUrl)), audios: await Promise.all(audios.map(toDataUrl)), params });
 return await poll(
-  () => http.get(\`/v1/tasks/\${encodeURIComponent(task.task_id)}\`),
+  () => http.get(\`/tasks/\${encodeURIComponent(task.task_id)}\`),
   (state) => {
     if (state.status === "failed") throw new Error(state.error || "Crun video generation failed");
     const url = state.media_urls?.[0] || state.mediaUrls?.[0] || state.url;
