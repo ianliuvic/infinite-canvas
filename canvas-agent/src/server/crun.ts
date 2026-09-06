@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { logger } from "../utils/logger.js";
@@ -22,9 +23,15 @@ type CrunGenerateInput = {
     params?: Record<string, unknown>;
 };
 
+type CrunCanvasJob =
+    | { status: "pending" | "running"; crunTaskId?: string }
+    | { status: "success"; result: ReturnType<typeof completedCrunResult> }
+    | { status: "failed"; error: string };
+
 const CRUN_API_BASE = String(process.env.CRUN_API_BASE_URL || "https://api.crun.ai").replace(/\/+$/, "");
 const CATALOG_PATH = String(process.env.CRUN_MODEL_CATALOG || "/opt/codex-worker/bundled-skills/crun-agent-skills/catalog/models.json");
 const MEDIA_READY_DELAYS_MS = [200, 400, 800, 1600, 2500];
+const crunCanvasJobs = new Map<string, CrunCanvasJob>();
 
 const MODEL_SCRIPTS: Record<CrunCapability, string> = {
     image: `const result = await http.post("/generate", { model, capability: "image", prompt, images, params });
@@ -70,6 +77,35 @@ export async function generateWithCrun(body: CrunGenerateInput) {
     const created = await createCrunTask(body);
     const completed = await crunStage("task execution", () => waitForTask(created.task_id));
     return completedCrunResult(created.task_id, completed);
+}
+
+export function submitCrunCanvasJob(body: CrunGenerateInput) {
+    const jobId = crypto.randomUUID();
+    crunCanvasJobs.set(jobId, { status: "pending" });
+    void runCrunCanvasJob(jobId, body);
+    return { ok: true, task_id: jobId, status: "pending" as const };
+}
+
+export function readCrunCanvasJob(jobId: string) {
+    const normalizedJobId = jobId.trim();
+    const job = crunCanvasJobs.get(normalizedJobId);
+    if (!job) throw new CrunHttpError(404, "Crun canvas task was not found; submit a new generation");
+    if (job.status === "success") return job.result;
+    if (job.status === "failed") return { ok: false, task_id: normalizedJobId, status: "failed" as const, error: job.error };
+    return { ok: true, task_id: normalizedJobId, status: job.status };
+}
+
+async function runCrunCanvasJob(jobId: string, body: CrunGenerateInput) {
+    try {
+        const created = await createCrunTask(body);
+        crunCanvasJobs.set(jobId, { status: "running", crunTaskId: created.task_id });
+        const completed = await crunStage("task execution", () => waitForTask(created.task_id));
+        crunCanvasJobs.set(jobId, { status: "success", result: completedCrunResult(jobId, completed) });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        crunCanvasJobs.set(jobId, { status: "failed", error: message });
+        logger.warn("Crun canvas task failed", { jobId, message });
+    }
 }
 
 export async function createCrunTask(body: CrunGenerateInput) {
