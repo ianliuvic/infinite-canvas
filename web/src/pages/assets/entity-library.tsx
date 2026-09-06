@@ -1,9 +1,10 @@
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Select, Tag, Typography } from "antd";
+import { App, Button, Card, Drawer, Empty, Form, Input, Modal, Select, Tag, Typography } from "antd";
 import { Boxes, PencilLine, Plus, Trash2, Upload } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { entityKindLabel, entityRoleLabel, entitySearchText } from "@/lib/canvas/entity-canvas";
+import { PersistedAssetImage } from "@/components/assets/persisted-asset-image";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type AssetEntity, type EntityAssetMember, type EntityAssetRole, type EntityKind } from "@/stores/use-asset-store";
 
@@ -102,11 +103,10 @@ export function EntityLibrary({ keyword }: { keyword: string }) {
                 <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {filtered.map((entity) => {
                         const cover = entity.members.map((member) => assetById.get(member.assetId)).find((asset) => asset?.kind === "image");
-                        const coverUrl = cover?.kind === "image" ? cover.coverUrl || cover.data.dataUrl : "";
                         return (
                             <Card key={entity.id} hoverable className="overflow-hidden" styles={{ body: { padding: 0 } }}>
                                 <button type="button" className="block w-full text-left" onClick={() => setPreview(entity)}>
-                                    {coverUrl ? <img src={coverUrl} alt={entity.name} className="aspect-[4/3] w-full object-cover" /> : <div className="flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-amber-50 to-stone-100 dark:from-amber-950/30 dark:to-stone-900"><Boxes className="size-10 text-amber-600/70" /></div>}
+                                    {cover?.kind === "image" ? <PersistedAssetImage asset={cover} alt={entity.name} className="aspect-[4/3] w-full object-cover" placeholder={<div className="aspect-[4/3] w-full bg-stone-50 dark:bg-stone-900" />} /> : <div className="flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-amber-50 to-stone-100 dark:from-amber-950/30 dark:to-stone-900"><Boxes className="size-10 text-amber-600/70" /></div>}
                                     <div className="p-4">
                                         <div className="flex items-start justify-between gap-2"><h2 className="line-clamp-1 font-semibold">{entity.name}</h2><Tag className="m-0 shrink-0">{entityKindLabel(entity.kind)}</Tag></div>
                                         <p className="mt-2 line-clamp-3 min-h-[3.75rem] text-xs leading-5 text-stone-500 dark:text-stone-400">{entity.summary || entity.description || t("entities.noSummary")}</p>
@@ -142,7 +142,7 @@ export function EntityLibrary({ keyword }: { keyword: string }) {
             </Modal>
 
             <Drawer title={preview?.name} open={Boolean(preview)} size="large" onClose={() => setPreview(null)}>
-                {preview ? <div className="space-y-5"><div className="flex flex-wrap gap-2"><Tag color="gold">{entityKindLabel(preview.kind)}</Tag>{preview.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</div>{preview.summary ? <Typography.Paragraph className="text-base">{preview.summary}</Typography.Paragraph> : null}{[["description", preview.description], ["prompt", preview.prompt], ["negativePrompt", preview.negativePrompt], ["usageRules", preview.usageRules]].map(([label, value]) => value ? <div key={label}><Typography.Text type="secondary" className="text-xs">{t(`entities.fields.${label}`)}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{value}</Typography.Paragraph></div> : null)}<div><Typography.Text strong>{t("entities.fields.members")}</Typography.Text><div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{preview.members.map((member) => { const asset=assetById.get(member.assetId); if(!asset) return null; const cover=asset.kind === "image" ? asset.coverUrl || asset.data.dataUrl : asset.kind === "video" ? asset.coverUrl : ""; return <div key={member.assetId} className="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-800">{cover ? <Image preview={false} src={cover} alt={asset.title} className="aspect-square w-full object-cover" /> : <div className="grid aspect-square place-items-center bg-stone-100 text-xs dark:bg-stone-900">{t(`assets.kinds.${asset.kind}`)}</div>}<div className="p-2"><div className="truncate text-xs font-medium">{asset.title}</div><div className="mt-1 text-[11px] text-stone-500">{entityRoleLabel(member)}</div></div></div>; })}</div></div></div> : null}
+                {preview ? <div className="space-y-5"><div className="flex flex-wrap gap-2"><Tag color="gold">{entityKindLabel(preview.kind)}</Tag>{preview.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</div>{preview.summary ? <Typography.Paragraph className="text-base">{preview.summary}</Typography.Paragraph> : null}{[["description", preview.description], ["prompt", preview.prompt], ["negativePrompt", preview.negativePrompt], ["usageRules", preview.usageRules]].map(([label, value]) => value ? <div key={label}><Typography.Text type="secondary" className="text-xs">{t(`entities.fields.${label}`)}</Typography.Text><Typography.Paragraph className="mt-1 whitespace-pre-wrap">{value}</Typography.Paragraph></div> : null)}<div><Typography.Text strong>{t("entities.fields.members")}</Typography.Text><div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{preview.members.map((member) => { const asset=assetById.get(member.assetId); if(!asset) return null; return <div key={member.assetId} className="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-800">{asset.kind === "image" ? <PersistedAssetImage asset={asset} alt={asset.title} className="aspect-square w-full object-cover" placeholder={<div className="aspect-square w-full bg-stone-100 dark:bg-stone-900" />} /> : <div className="grid aspect-square place-items-center bg-stone-100 text-xs dark:bg-stone-900">{t(`assets.kinds.${asset.kind}`)}</div>}<div className="p-2"><div className="truncate text-xs font-medium">{asset.title}</div><div className="mt-1 text-[11px] text-stone-500">{entityRoleLabel(member)}</div></div></div>; })}</div></div></div> : null}
             </Drawer>
             <Modal title={t("entities.deleteTitle")} open={Boolean(deleting)} onCancel={() => setDeleting(null)} onOk={() => { if (deleting) removeEntity(deleting.id); setDeleting(null); }} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>{t("entities.deleteConfirm", { name: deleting?.name })}</Modal>
         </section>

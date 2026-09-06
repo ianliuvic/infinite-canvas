@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
+import { PersistedAssetImage } from "@/components/assets/persisted-asset-image";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
@@ -28,23 +29,26 @@ const PAGE_SIZE = 8;
 
 const kindOptions = ["all", "text", "image", "video"];
 
-function PickerCard({ title, kind, cover, onClick }: { title: string; kind: string; cover: string; onClick: () => void }) {
+function PickerCard({ asset, onClick }: { asset: Asset; onClick: () => void }) {
     const { t } = useTranslation();
+    const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
     return (
         <button
             type="button"
             className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500"
             onClick={onClick}
         >
-            {cover ? (
-                <img src={cover} alt={title} className="aspect-[4/3] w-full object-cover" />
+            {asset.kind === "image" ? (
+                <PersistedAssetImage asset={asset} fallback={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" placeholder={<div className="aspect-[4/3] w-full bg-stone-100 dark:bg-stone-800" />} />
+            ) : cover ? (
+                <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
             ) : (
-                <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{title}</div>
+                <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{asset.title}</div>
             )}
             <div className="p-2.5">
                 <div className="flex items-center justify-between gap-2">
-                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
-                    <Tag className="m-0 shrink-0 text-[10px]">{t(`assets.kinds.${kind}`)}</Tag>
+                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{asset.title}</span>
+                    <Tag className="m-0 shrink-0 text-[10px]">{t(`assets.kinds.${asset.kind}`)}</Tag>
                 </div>
             </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">{t("canvas.assetPicker.insert")}</div>
@@ -117,7 +121,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
             {visible.length ? (
                 <div className="grid grid-cols-4 gap-3">
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
+                        <PickerCard key={asset.id} asset={asset} onClick={() => handleInsert(asset)} />
                     ))}
                 </div>
             ) : (

@@ -5,6 +5,7 @@ import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { PersistedAssetImage } from "@/components/assets/persisted-asset-image";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, uploadImage } from "@/services/image-storage";
@@ -431,7 +432,9 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
             styles={{ body: { padding: 0 } }}
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    {cover ? (
+                    {asset.kind === "image" ? (
+                        <PersistedAssetImage asset={asset} fallback={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" placeholder={<div className="aspect-[4/3] w-full bg-stone-100 dark:bg-stone-900" />} />
+                    ) : cover ? (
                         <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
                     ) : (
                         <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>
@@ -497,7 +500,9 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
         <Drawer title={t("assets.details")} open={Boolean(asset)} size="large" onClose={onClose}>
             {asset ? (
                 <div className="space-y-5">
-                    {cover ? (
+                    {asset.kind === "image" ? (
+                        <PersistedAssetImage asset={asset} fallback={cover} alt={asset.title} className="max-h-[70vh] w-full rounded-lg object-contain" placeholder={<div className="aspect-[4/3] w-full bg-stone-100 dark:bg-stone-900" />} />
+                    ) : cover ? (
                         <Image src={cover} alt={asset.title} className="rounded-lg" />
                     ) : (
                         <div className="rounded-lg border border-stone-200 bg-stone-50 p-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>

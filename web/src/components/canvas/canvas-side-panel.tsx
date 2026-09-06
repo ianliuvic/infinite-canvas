@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
+import { PersistedAssetImage } from "@/components/assets/persisted-asset-image";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset, type AssetEntity, type AssetKind } from "@/stores/use-asset-store";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
@@ -455,10 +456,9 @@ function EntityAssetCard({ entity, assets, theme, onInsert }: { entity: AssetEnt
     const { t } = useTranslation();
     const assetById = new Map(assets.map((asset) => [asset.id, asset]));
     const cover = entity.members.map((member) => assetById.get(member.assetId)).find((asset) => asset?.kind === "image");
-    const coverUrl = cover?.kind === "image" ? cover.coverUrl || cover.data.dataUrl : "";
     return (
         <button type="button" onClick={onInsert} title={t("canvas.sidePanel.insertEntity")} className="group relative aspect-[4/3] overflow-hidden rounded-xl border text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-lg" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
-            {coverUrl ? <img src={coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-amber-50 to-stone-100 dark:from-amber-950/30 dark:to-stone-900"><Boxes className="size-8 text-amber-600/70" /></div>}
+            {cover?.kind === "image" ? <PersistedAssetImage asset={cover} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" placeholder={<div className="size-full bg-stone-50 dark:bg-stone-900" />} /> : <div className="grid size-full place-items-center bg-gradient-to-br from-amber-50 to-stone-100 dark:from-amber-950/30 dark:to-stone-900"><Boxes className="size-8 text-amber-600/70" /></div>}
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/65 to-transparent px-2.5 pb-2 pt-7 text-white">
                 <div className="truncate text-xs font-semibold">{entity.name}</div>
                 <div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] text-white/70"><span>{entityKindLabel(entity.kind)}</span><span>{t("canvas.sidePanel.entityReferences", { count: entity.members.length })}</span></div>
@@ -502,7 +502,7 @@ function AssetCover({ asset }: { asset: Asset }) {
         if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
         return <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
     }
-    return <img src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+    return <PersistedAssetImage asset={asset} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" placeholder={<div className="size-full bg-stone-50 dark:bg-stone-900" />} />;
 }
 
 // ---------------------------------------------------------------------------
