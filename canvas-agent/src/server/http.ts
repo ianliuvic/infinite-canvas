@@ -14,7 +14,7 @@ import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWo
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
-import { CrunHttpError, describeCrunCanvasModel, generateWithCrun, listCrunCanvasModels } from "./crun.js";
+import { createCrunTask, CrunHttpError, describeCrunCanvasModel, generateWithCrun, getCrunTask, listCrunCanvasModels } from "./crun.js";
 import { PersistentStorage, StorageConflictError, StorageNotConfiguredError } from "./persistent-storage.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
@@ -240,6 +240,22 @@ export function startHttpServer() {
     app.post("/agent/crun/v1/generate", route(async (req, res) => {
         try {
             res.json(await generateWithCrun(req.body || {}));
+        } catch (error) {
+            if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
+            throw error;
+        }
+    }));
+    app.post("/agent/crun/v1/tasks", route(async (req, res) => {
+        try {
+            res.status(202).json(await createCrunTask(req.body || {}));
+        } catch (error) {
+            if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
+            throw error;
+        }
+    }));
+    app.get("/agent/crun/v1/tasks/:taskId", route(async (req, res) => {
+        try {
+            res.json(await getCrunTask(routeParam(req.params.taskId)));
         } catch (error) {
             if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
             throw error;

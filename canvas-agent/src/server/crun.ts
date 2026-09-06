@@ -35,8 +35,16 @@ return result.media_urls || result.mediaUrls || [];`,
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return \`data:\${file.type || "application/octet-stream"};base64,\${btoa(binary)}\`;
 };
-const result = await http.post("/generate", { model, capability: "video", prompt, images, videos: await Promise.all(videos.map(toDataUrl)), audios: await Promise.all(audios.map(toDataUrl)), params });
-return result.media_urls?.[0] || result.mediaUrls?.[0] || result.url;`,
+const task = await http.post("/v1/tasks", { model, capability: "video", prompt, images, videos: await Promise.all(videos.map(toDataUrl)), audios: await Promise.all(audios.map(toDataUrl)), params });
+return await poll(
+  () => http.get(\`/v1/tasks/\${encodeURIComponent(task.task_id)}\`),
+  (state) => {
+    if (state.status === "failed") throw new Error(state.error || "Crun video generation failed");
+    const url = state.media_urls?.[0] || state.mediaUrls?.[0] || state.url;
+    return state.status === "success" && url ? url : null;
+  },
+  { intervalMs: 2500, timeoutMs: 600000 },
+);`,
     audio: `const result = await http.post("/generate", { model, capability: "audio", prompt, params });
 return result.media_urls?.[0] || result.mediaUrls?.[0] || result.url;`,
 };
@@ -59,6 +67,12 @@ export async function listCrunCanvasModels() {
 }
 
 export async function generateWithCrun(body: CrunGenerateInput) {
+    const created = await createCrunTask(body);
+    const completed = await crunStage("task execution", () => waitForTask(created.task_id));
+    return completedCrunResult(created.task_id, completed);
+}
+
+export async function createCrunTask(body: CrunGenerateInput) {
     const model = String(body.model || "").trim();
     const capability = normalizeCapability(body.capability);
     const prompt = String(body.prompt || "").trim();
@@ -94,7 +108,21 @@ export async function generateWithCrun(body: CrunGenerateInput) {
     const created = await crunStage("task creation", () => crunRequest("POST", "/api/v1/client/job/CreateTask", { model, input }, false)) as Record<string, unknown>;
     const taskId = String(created.task_id || "");
     if (!taskId) throw new CrunHttpError(502, "Crun did not return a task ID");
-    const completed = await crunStage("task execution", () => waitForTask(taskId));
+    logger.info("Crun task created", { model, taskId });
+    return { ok: true, task_id: taskId, status: "pending" as const };
+}
+
+export async function getCrunTask(taskId: string) {
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId) throw new CrunHttpError(400, "Crun task ID is required");
+    const task = await crunStage("task status", () => crunRequest("GET", `/api/v1/client/job/TaskInfo?task_id=${encodeURIComponent(normalizedTaskId)}`)) as Record<string, unknown>;
+    const status = String(task.status || "").toLowerCase();
+    if (status === "success") return completedCrunResult(normalizedTaskId, task);
+    if (status === "failed") return { ok: false, task_id: normalizedTaskId, status: "failed" as const, error: crunTaskError(task) };
+    return { ok: true, task_id: normalizedTaskId, status: status || "pending" };
+}
+
+function completedCrunResult(taskId: string, completed: Record<string, unknown>) {
     const result = completed.result && typeof completed.result === "object" ? completed.result as Record<string, unknown> : {};
     const mediaUrls = Array.isArray(result.media_urls) ? result.media_urls.filter((value): value is string => typeof value === "string" && Boolean(value)) : [];
     if (!mediaUrls.length) throw new CrunHttpError(502, String(result.message || completed.message || "Crun completed without a media URL"));
@@ -162,12 +190,18 @@ async function waitForTask(taskId: string) {
         const status = String(task.status || "").toLowerCase();
         if (status === "success") return task;
         if (status === "failed") {
-            const result = task.result && typeof task.result === "object" ? task.result as Record<string, unknown> : {};
-            throw new CrunHttpError(502, String(result.message || task.message || "Crun generation failed"));
+            throw new CrunHttpError(502, crunTaskError(task));
         }
         if (Date.now() >= deadline) throw new CrunHttpError(504, `Crun task ${taskId} is still running; retry status later`);
         await delay(2500);
     }
+}
+
+function crunTaskError(task: Record<string, unknown>) {
+    const result = task.result && typeof task.result === "object" && !Array.isArray(task.result) ? task.result as Record<string, unknown> : {};
+    const message = String(result.message || result.error || task.message || "Crun generation failed");
+    const code = result.code === undefined || result.code === null ? "" : String(result.code);
+    return code && !message.includes(code) ? `${message} (Crun code ${code})` : message;
 }
 
 async function ensureRemoteMedia(value: string, kind: string) {

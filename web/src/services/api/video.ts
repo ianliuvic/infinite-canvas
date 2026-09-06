@@ -96,8 +96,9 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
-    const result = videoPluginResult(
-        await runModelPlugin({
+    let result: VideoGenerationResult;
+    try {
+        result = videoPluginResult(await runModelPlugin({
             capability: "video",
             script,
             config,
@@ -117,8 +118,10 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 providerParams: parseProviderParams(config.videoProviderParams),
             },
             signal: options?.signal,
-        }),
-    );
+        }));
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
     const id = nanoid();
     pluginVideoResults.set(id, result);
     return { id, provider: "plugin", model };
