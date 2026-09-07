@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { readAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
+import { SERVER_MANAGED_API_KEY } from "@/services/api/server-managed-auth";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
@@ -632,7 +633,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 name: "Crun",
                 baseUrl: `${endpoint}/agent/crun`,
                 // This is only a readiness marker. CRUN_API_KEY remains on the Agent server.
-                apiKey: "server-managed",
+                apiKey: SERVER_MANAGED_API_KEY,
                 apiFormat: "openai" as const,
                 models: data,
             };
