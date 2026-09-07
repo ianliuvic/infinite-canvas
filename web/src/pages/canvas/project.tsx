@@ -48,7 +48,7 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
-import { buildCanvasResourceReferences, buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceReferences, buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, isNodeEffectivelyDisabled, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { agentReferenceMarker } from "@/components/agent/agent-chat-inline-tokens";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
@@ -2400,6 +2400,10 @@ function InfiniteCanvasPage() {
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
+            if (sourceNode && isNodeEffectivelyDisabled(sourceNode, nodesRef.current)) {
+                message.warning(t("canvas.nodeToolbar.disabledGeneration"));
+                return;
+            }
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -3147,15 +3151,23 @@ function InfiniteCanvasPage() {
         setPreviewNodeId(node.id);
         setPreviewImageId(imageId || (node.type === CanvasNodeType.Image && node.metadata?.images?.length ? node.metadata.primaryImageId || node.metadata.images.find((image) => image.content === node.metadata?.content)?.id || node.metadata.images.find((image) => image.content)?.id || null : null));
     }, []);
+
+    const toggleNodeDisabled = useCallback((nodeId: string) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, disabled: !node.metadata?.disabled } } : node)));
+    }, []);
     const handleNodeRetry = useCallback(
         (node: CanvasNodeData) => {
+            if (isNodeEffectivelyDisabled(node, nodesRef.current)) {
+                message.warning(t("canvas.nodeToolbar.disabledGeneration"));
+                return;
+            }
             if (node.type === CanvasNodeType.Text && (node.metadata?.textCount || 1) > 1) {
                 void generateNodeRef.current?.(node.id, "text", node.metadata?.prompt || "");
                 return;
             }
             void handleRetryNode(node);
         },
-        [handleRetryNode],
+        [handleRetryNode, message, t],
     );
     const handleNodeContextMenu = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.preventDefault();
@@ -3310,6 +3322,7 @@ function InfiniteCanvasPage() {
                             scale={viewport.k}
                             isSelected={selectedNodeIds.has(node.id)}
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
+                            isDisabled={isNodeEffectivelyDisabled(node, nodes)}
                             isFocusRelated={activeNodeId === node.id}
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
@@ -3400,6 +3413,7 @@ function InfiniteCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
+                    onToggleDisabled={(node) => toggleNodeDisabled(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                     onUngroup={(node) => ungroupSelection(new Set([node.id]))}
                 />
@@ -3453,6 +3467,7 @@ function InfiniteCanvasPage() {
                         canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
                         canGroup={contextMenu.type === "node" && canGroupSelection}
                         canUngroup={contextMenu.type === "node" && canUngroupSelection}
+                        nodeDisabled={Boolean(contextMenuNode?.metadata?.disabled)}
                         onClose={() => setContextMenu(null)}
                         onCaptureVideoFrame={(position) => {
                             if (contextMenu.type !== "node") return;
@@ -3465,6 +3480,11 @@ function InfiniteCanvasPage() {
                         }}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onToggleDisabled={() => {
+                            if (contextMenu.type !== "node") return;
+                            toggleNodeDisabled(contextMenu.nodeId);
+                            setContextMenu(null);
+                        }}
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 deleteNodes(new Set([contextMenu.nodeId]));

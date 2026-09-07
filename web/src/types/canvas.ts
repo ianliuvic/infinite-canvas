@@ -45,6 +45,7 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    disabled?: boolean;
     content?: string;
     composerContent?: string;
     prompt?: string;

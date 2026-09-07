@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
+import { ChevronRight, Copy, Download, EyeOff, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -21,6 +21,7 @@ type CanvasNodeProps = {
     scale: number;
     isSelected: boolean;
     isRelated: boolean;
+    isDisabled?: boolean;
     isFocusRelated: boolean;
     isConnectionTarget: boolean;
     isConnecting: boolean;
@@ -86,6 +87,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     scale,
     isSelected,
     isRelated,
+    isDisabled = false,
     isFocusRelated,
     isConnectionTarget,
     isConnecting,
@@ -302,6 +304,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                 height: data.height,
                 transition: "box-shadow 200ms ease",
                 contain: "layout style",
+                opacity: isDisabled ? 0.46 : 1,
+                filter: isDisabled ? "grayscale(0.45)" : undefined,
             }}
             onMouseEnter={() => {
                 setHovered(true);
@@ -319,6 +323,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                 else onContextMenu(event, data.id);
             }}
         >
+            {isDisabled ? (
+                <div className="pointer-events-none absolute right-2 top-2 z-[66] flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
+                    <EyeOff className="size-3" />
+                    {t("canvas.nodeToolbar.disabled")}
+                </div>
+            ) : null}
             {!referenceSelectionState && (isSelected || hovered || isEditingTitle) && (
                 <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {isEditingTitle ? (
