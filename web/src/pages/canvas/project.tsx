@@ -133,8 +133,10 @@ type CanvasPreviewItem = {
     title: string;
 };
 
-const VIDEO_NODE_MAX_WIDTH = 420;
-const VIDEO_NODE_MAX_HEIGHT = 420;
+const IMAGE_NODE_MAX_WIDTH = 480;
+const IMAGE_NODE_MAX_HEIGHT = 480;
+const VIDEO_NODE_MAX_WIDTH = 560;
+const VIDEO_NODE_MAX_HEIGHT = 560;
 // Stable empty reference array prevents `... || []` from invalidating CanvasNode's React.memo on every render.
 const EMPTY_REFERENCES: CanvasResourceReference[] = [];
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
@@ -2473,7 +2475,7 @@ function InfiniteCanvasPage() {
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
-                    const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+                    const imageOutputSize = nodeSizeFromRatio(generationConfig.size, IMAGE_NODE_MAX_WIDTH, IMAGE_NODE_MAX_HEIGHT) || { width: IMAGE_NODE_MAX_WIDTH, height: IMAGE_NODE_MAX_HEIGHT * 0.75 };
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
                     const rootId = isEmptyImageNode ? nodeId : nanoid();
                     const imageIds = Array.from({ length: count }, () => nanoid());
@@ -2484,10 +2486,10 @@ function InfiniteCanvasPage() {
                         title: effectivePrompt.slice(0, 32) || "Generated Image",
                         position: {
                             x: isEmptyImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + 96,
-                            y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
+                            y: parentPosition.y + parentConfig.height / 2 - imageOutputSize.height / 2,
                         },
-                        width: isEmptyImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
-                        height: isEmptyImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
+                        width: isEmptyImageNode ? sourceNode?.width || imageOutputSize.width : imageOutputSize.width,
+                        height: isEmptyImageNode ? sourceNode?.height || imageOutputSize.height : imageOutputSize.height,
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
@@ -2546,7 +2548,7 @@ function InfiniteCanvasPage() {
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, { signal: controller.signal }).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
-                                const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                                const imageSize = fitNodeSize(uploaded.width, uploaded.height, IMAGE_NODE_MAX_WIDTH, IMAGE_NODE_MAX_HEIGHT);
                                 const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
                                 setNodes((prev) =>
                                     prev.map((node) => {
@@ -2606,7 +2608,7 @@ function InfiniteCanvasPage() {
                 }
 
                 if (mode === "video") {
-                    const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+                    const spec = nodeSizeFromRatio(generationConfig.size, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
                     const parent = sourceNode?.position || { x: 0, y: 0 };
@@ -2920,7 +2922,6 @@ function InfiniteCanvasPage() {
                     ? await requestEdit(generationConfig, prompt, retryImages, { signal: controller.signal }).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl, { signal: controller.signal });
-                const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const retryImage: CanvasNodeImage = {
                     id: imageId || node.metadata?.primaryImageId || nanoid(),
                     status: NODE_STATUS_SUCCESS,
@@ -2947,7 +2948,7 @@ function InfiniteCanvasPage() {
                         if (item.id !== node.id) return item;
                         const makePrimary = !imageId || !item.metadata?.content;
                         const edge = imageId ? Math.max(item.width, item.height) : 0;
-                        const imageSize = imageId && item.metadata?.freeResize ? { width: item.width, height: item.height } : imageId ? fitNodeSize(uploadedImage.width, uploadedImage.height, edge, edge) : fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
+                        const imageSize = imageId && item.metadata?.freeResize ? { width: item.width, height: item.height } : imageId ? fitNodeSize(uploadedImage.width, uploadedImage.height, edge, edge) : fitNodeSize(uploadedImage.width, uploadedImage.height, IMAGE_NODE_MAX_WIDTH, IMAGE_NODE_MAX_HEIGHT);
                         return {
                             ...item,
                             type: CanvasNodeType.Image,
