@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Group, Video } from "lucide-react";
+import { ChevronLeft, ChevronRight, Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -122,6 +122,15 @@ type CanvasGenerationRequest = {
     originNodeId: string;
     runningNodeId: string;
     controller: AbortController;
+};
+
+type CanvasPreviewItem = {
+    key: string;
+    nodeId: string;
+    imageId: string | null;
+    type: "image" | "video";
+    content: string;
+    title: string;
 };
 
 const VIDEO_NODE_MAX_WIDTH = 420;
@@ -725,8 +734,53 @@ function InfiniteCanvasPage() {
     const superResolveNode = superResolveNodeId ? nodeById.get(superResolveNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
-    const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
-    const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
+    const previewItems = useMemo<CanvasPreviewItem[]>(
+        () =>
+            nodes.flatMap((node): CanvasPreviewItem[] => {
+                if (node.type === CanvasNodeType.Video && node.metadata?.content) {
+                    return [{ key: node.id, nodeId: node.id, imageId: null, type: "video" as const, content: node.metadata.content, title: node.title }];
+                }
+                if (node.type !== CanvasNodeType.Image) return [];
+                const images = node.metadata?.images?.filter((image) => Boolean(image.content)) || [];
+                if (images.length) {
+                    return images.map((image, index) => ({
+                        key: `${node.id}:${image.id}`,
+                        nodeId: node.id,
+                        imageId: image.id,
+                        type: "image" as const,
+                        content: image.content,
+                        title: images.length > 1 ? `${node.title} ${index + 1}` : node.title,
+                    }));
+                }
+                return node.metadata?.content ? [{ key: node.id, nodeId: node.id, imageId: null, type: "image" as const, content: node.metadata.content, title: node.title }] : [];
+            }),
+        [nodes],
+    );
+    const previewIndex = previewItems.findIndex((item) => item.nodeId === previewNodeId && item.imageId === previewImageId);
+    const previewItem = previewIndex >= 0 ? previewItems[previewIndex] : null;
+    const showPreviewAt = useCallback(
+        (index: number) => {
+            if (!previewItems.length) return;
+            const item = previewItems[(index + previewItems.length) % previewItems.length];
+            setPreviewNodeId(item.nodeId);
+            setPreviewImageId(item.imageId);
+        },
+        [previewItems],
+    );
+    const showPreviousPreview = useCallback(() => showPreviewAt(previewIndex - 1), [previewIndex, showPreviewAt]);
+    const showNextPreview = useCallback(() => showPreviewAt(previewIndex + 1), [previewIndex, showPreviewAt]);
+
+    useEffect(() => {
+        if (!previewItem || previewItems.length < 2) return;
+        const handlePreviewKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            if (event.key === "ArrowLeft") showPreviousPreview();
+            else showNextPreview();
+        };
+        window.addEventListener("keydown", handlePreviewKeyDown);
+        return () => window.removeEventListener("keydown", handlePreviewKeyDown);
+    }, [previewItem, previewItems.length, showNextPreview, showPreviousPreview]);
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
@@ -3090,7 +3144,7 @@ function InfiniteCanvasPage() {
     }, []);
     const handleNodeViewImage = useCallback((node: CanvasNodeData, imageId?: string) => {
         setPreviewNodeId(node.id);
-        setPreviewImageId(imageId || null);
+        setPreviewImageId(imageId || (node.type === CanvasNodeType.Image && node.metadata?.images?.length ? node.metadata.primaryImageId || node.metadata.images.find((image) => image.content === node.metadata?.content)?.id || node.metadata.images.find((image) => image.content)?.id || null : null));
     }, []);
     const handleNodeRetry = useCallback(
         (node: CanvasNodeData) => {
@@ -3445,15 +3499,43 @@ function InfiniteCanvasPage() {
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
 
                 <Modal
-                    title={t("canvas.projectPage.imageDetails")}
-                    open={Boolean(previewContent)}
+                    title={
+                        previewItem ? (
+                            <div className="flex min-w-0 items-center gap-3 pr-8">
+                                <span className="truncate">{previewItem.title || t(previewItem.type === "video" ? "assets.kinds.video" : "assets.kinds.image")}</span>
+                                <span className="shrink-0 text-xs font-normal opacity-50">{t("canvas.projectPage.mediaPosition", { current: previewIndex + 1, total: previewItems.length })}</span>
+                            </div>
+                        ) : null
+                    }
+                    open={Boolean(previewItem)}
                     centered
-                    onCancel={() => setPreviewNodeId(null)}
+                    onCancel={() => {
+                        setPreviewNodeId(null);
+                        setPreviewImageId(null);
+                    }}
                     footer={null}
                     width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
+                    styles={{ body: { padding: 0, maxHeight: "80vh" } }}
                 >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    {previewItem ? (
+                        <div className="relative flex min-h-48 min-w-64 items-center justify-center overflow-hidden rounded-b-lg bg-black/90 sm:min-w-[32rem]">
+                            {previewItem.type === "video" ? (
+                                <video key={previewItem.key} src={previewItem.content} aria-label={previewItem.title || t("assets.kinds.video")} controls autoPlay preload="metadata" style={{ maxWidth: "min(82vw, 1200px)", maxHeight: "80vh", objectFit: "contain" }} />
+                            ) : (
+                                <img key={previewItem.key} src={previewItem.content} alt={previewItem.title || t("assets.kinds.image")} style={{ maxWidth: "min(82vw, 1200px)", maxHeight: "80vh", objectFit: "contain" }} />
+                            )}
+                            {previewItems.length > 1 ? (
+                                <>
+                                    <button type="button" aria-label={t("canvas.projectPage.previousMedia")} title={t("canvas.projectPage.previousMedia")} className="absolute left-2 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg backdrop-blur transition hover:scale-105 hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80" onClick={showPreviousPreview}>
+                                        <ChevronLeft size={24} />
+                                    </button>
+                                    <button type="button" aria-label={t("canvas.projectPage.nextMedia")} title={t("canvas.projectPage.nextMedia")} className="absolute right-2 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg backdrop-blur transition hover:scale-105 hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80" onClick={showNextPreview}>
+                                        <ChevronRight size={24} />
+                                    </button>
+                                </>
+                            ) : null}
+                        </div>
+                    ) : null}
                 </Modal>
 
                 <Modal
