@@ -93,6 +93,22 @@ test("divergent same-field conflict retains durable outbox across reload", async
     assert.match(await c.localForageStorage.getItem(key), /second/);
     assert.match(c.getSaveStatus(), /冲突/);
 });
+test("conflicting local changes can be discarded in favor of the current cloud state", async () => {
+    const e = environment();
+    e.remote = value([{id:"a", title:"old"}]);
+    const a=e.tab(), b=e.tab();
+    await Promise.all([a.localForageStorage.getItem(key), b.localForageStorage.getItem(key)]);
+    await a.localForageStorage.setItem(key, value([{id:"a", title:"cloud"}]));
+    await a.flushDurableState();
+    await b.localForageStorage.setItem(key, value([{id:"a", title:"local"}]));
+    await assert.rejects(b.flushDurableState(), /保存冲突/);
+    assert.equal(await b.discardConflictingState(), true);
+    assert.equal(e.db.get("state_outbox").size, 0);
+    assert.doesNotMatch(b.getSaveStatus(), /冲突|未同步/);
+    const c=e.tab();
+    assert.match(await c.localForageStorage.getItem(key), /cloud/);
+    assert.doesNotMatch(await c.localForageStorage.getItem(key), /local/);
+});
 test("rapid offline edits are replayed as a complete latest snapshot", async () => {
     const e=environment(), a=e.tab();
     await a.localForageStorage.getItem(key);

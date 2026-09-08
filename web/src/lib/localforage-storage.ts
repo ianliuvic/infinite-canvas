@@ -115,6 +115,30 @@ export async function exportPendingState() {
     URL.revokeObjectURL(url);
 }
 
+export async function discardConflictingState() {
+    const names = [...errors.entries()].filter(([, error]) => error.includes("保存冲突")).map(([name]) => name);
+    if (!names.length) return false;
+    await Promise.all([...localWrites.entries()].filter(([name]) => names.includes(name)).map(([, task]) => task.catch(() => undefined)));
+    const remoteValues = new Map<string, string | null>();
+    for (const name of names) {
+        const remote = await readRemoteState(name);
+        if (!remote.enabled) throw new Error("云端存储未启用，无法安全清除本机冲突");
+        remoteValues.set(name, remote.value);
+    }
+    const pending = await pendingFor();
+    for (const item of pending) if (names.includes(item.name)) await outbox.removeItem(item.id);
+    for (const [id, item] of failedLocal) if (names.includes(item.name)) failedLocal.delete(id);
+    for (const [name, value] of remoteValues) {
+        views.set(name, value);
+        if (value === null) await localforage.removeItem(name);
+        else await localforage.setItem(name, value);
+        errors.delete(name);
+        dirty.delete(name);
+    }
+    notify();
+    return true;
+}
+
 export const localForageStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
