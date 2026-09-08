@@ -77,6 +77,18 @@ export async function writeRemoteObject(key: string, blob: Blob) {
     return true;
 }
 
+export async function importRemoteImage(url: string) {
+    const connection = storageConnection();
+    if (!connection) throw new Error("外链持久化需要启用托管存储");
+    const response = await fetch(connection.endpoint + "/storage/import-image", {
+        method: "POST", credentials: "include",
+        headers: { ...authHeaders(connection.token), "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+    });
+    if (!response.ok) throw await responseError(response);
+    return await response.json() as { storageKey: string; bytes: number; mimeType: string };
+}
+
 export async function readRemoteObject(key: string) {
     const connection = storageConnection();
     if (!connection) return null;

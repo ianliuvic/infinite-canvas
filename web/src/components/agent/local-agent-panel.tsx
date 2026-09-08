@@ -847,6 +847,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 const context = canvasContextRef.current;
                 const result = await runSiteTool(payload.name, payload.input || {}, navigate, {
                     canvasSnapshot: context?.snapshot || null,
+                    getCanvasSnapshot: () => canvasContextRef.current?.snapshot,
                     applyOps: context?.applyOps,
                     readAttachment: (attachmentId) => readTurnAttachment(endpoint, token, clientIdRef.current, attachmentId),
                 });

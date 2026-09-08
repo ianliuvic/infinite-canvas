@@ -16,6 +16,7 @@ import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
 import { CrunHttpError, describeCrunCanvasModel, generateWithCrun, listCrunCanvasModels, readCrunCanvasJob, submitCrunCanvasJob } from "./crun.js";
 import { PersistentStorage, StorageConflictError, StorageNotConfiguredError } from "./persistent-storage.js";
+import { importExternalImage } from "./import-image.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -145,6 +146,13 @@ export function startHttpServer() {
         res.status(401).json({ ok: false, error: "invalid token" });
     });
     app.get("/storage/status", (_req, res) => res.json({ ok: true, ...persistentStorage.status() }));
+    app.post("/storage/import-image", route(async (req, res) => {
+        const controller = new AbortController();
+        const abort = () => { if (!res.writableEnded) controller.abort(); };
+        res.on("close", abort);
+        try { res.json({ ok: true, ...await importExternalImage(String(req.body?.url || ""), persistentStorage, controller.signal) }); }
+        finally { res.off("close", abort); }
+    }));
     app.get("/storage/state/:key", route(async (req, res) => {
         const state = await persistentStorage.getState(storageKey(req.params.key));
         if (!state) return void res.status(404).json({ ok: false, error: "state not found" });

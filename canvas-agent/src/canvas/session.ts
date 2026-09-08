@@ -40,6 +40,7 @@ const SITE_TOOLS = new Set<ToolName>([
     "entities_add",
     "entities_update",
     "entities_place_on_canvas",
+    "canvas_persist_external_images",
     "generation_get_status",
 ]);
 
