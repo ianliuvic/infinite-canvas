@@ -95,7 +95,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; onTask?: (taskId: string) => void };
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -731,8 +731,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 images: [],
                 params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onTask: options?.onTask,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            const taskId = pluginImageTaskId(result);
+            const images = taskId ? await waitForPluginImageTask(requestConfig, taskId, options) : normalizePluginImages(result);
+            return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -792,8 +795,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 images: refs,
                 params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onTask: options?.onTask,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            const taskId = pluginImageTaskId(result);
+            const images = taskId ? await waitForPluginImageTask(requestConfig, taskId, options) : normalizePluginImages(result);
+            return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -837,6 +843,38 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
+    }
+}
+
+function pluginImageTaskId(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    const taskId = (value as { task_id?: unknown; taskId?: unknown }).task_id ?? (value as { taskId?: unknown }).taskId;
+    return typeof taskId === "string" ? taskId.trim() : "";
+}
+
+export async function waitForPluginImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    for (;;) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        try {
+            const response = await axios.get(buildApiUrl(requestConfig.baseUrl, `/tasks/${encodeURIComponent(taskId)}`), {
+                headers: aiHeaders(requestConfig),
+                signal: options?.signal,
+            });
+            const state = response.data as { status?: string; error?: string; media_urls?: string[]; mediaUrls?: string[] };
+            if (state.status === "failed") throw new Error(state.error || "Crun image generation failed");
+            const images = state.media_urls || state.mediaUrls || [];
+            if (state.status === "success" && images.length) return images;
+        } catch (error) {
+            if (axios.isCancel(error) || error instanceof DOMException && error.name === "AbortError") throw error;
+            // A stored task is authoritative: surface provider failures, but tolerate a transient polling request.
+            if (axios.isAxiosError(error) && (!error.response || [408, 429, 500, 502, 503, 504].includes(error.response.status))) {
+                await new Promise((resolve) => setTimeout(resolve, 2500));
+                continue;
+            }
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
     }
 }
 

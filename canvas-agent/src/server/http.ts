@@ -255,7 +255,7 @@ export function startHttpServer() {
     }));
     app.post(["/agent/crun/v1/tasks", "/agent/crun/v1/v1/tasks"], route(async (req, res) => {
         try {
-            res.status(202).json(submitCrunCanvasJob(req.body || {}));
+            res.status(202).json(await submitCrunCanvasJob(req.body || {}, persistentStorage));
         } catch (error) {
             if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
             throw error;
@@ -263,7 +263,7 @@ export function startHttpServer() {
     }));
     app.get(["/agent/crun/v1/tasks/:taskId", "/agent/crun/v1/v1/tasks/:taskId"], route(async (req, res) => {
         try {
-            res.json(readCrunCanvasJob(routeParam(req.params.taskId)));
+            res.json(await readCrunCanvasJob(routeParam(req.params.taskId), persistentStorage));
         } catch (error) {
             if (error instanceof CrunHttpError) return void res.status(error.status).json({ ok: false, error: error.message, details: error.details });
             throw error;

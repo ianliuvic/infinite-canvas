@@ -106,6 +106,26 @@ export class PersistentStorage {
         await this.s3!.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey(key) }));
     }
 
+    async putGenerationJob(jobId: string, status: string, providerTaskId = "", result: unknown = null, error = "") {
+        await this.ensureState();
+        await this.pool!.query(
+            `INSERT INTO canvas_generation_jobs (job_id, status, provider_task_id, result, error)
+             VALUES ($1, $2, NULLIF($3, ''), $4::jsonb, NULLIF($5, ''))
+             ON CONFLICT (job_id) DO UPDATE SET status = EXCLUDED.status, provider_task_id = COALESCE(EXCLUDED.provider_task_id, canvas_generation_jobs.provider_task_id), result = EXCLUDED.result, error = EXCLUDED.error, updated_at = NOW()`,
+            [jobId, status, providerTaskId, JSON.stringify(result), error],
+        );
+    }
+
+    async getGenerationJob(jobId: string) {
+        await this.ensureState();
+        const result = await this.pool!.query<{ status: string; provider_task_id: string | null; result: unknown; error: string | null }>(
+            "SELECT status, provider_task_id, result, error FROM canvas_generation_jobs WHERE job_id = $1",
+            [jobId],
+        );
+        const row = result.rows[0];
+        return row ? { status: row.status, providerTaskId: row.provider_task_id || "", result: row.result, error: row.error || "" } : null;
+    }
+
     private async ensureState() {
         if (!this.pool) throw new StorageNotConfiguredError("PostgreSQL storage is not configured");
         this.ready ||= this.initializeState();
@@ -129,6 +149,15 @@ export class PersistentStorage {
             );
             CREATE INDEX IF NOT EXISTS canvas_app_state_versions_lookup
                 ON canvas_app_state_versions (storage_key, created_at DESC);
+            CREATE TABLE IF NOT EXISTS canvas_generation_jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                provider_task_id TEXT,
+                result JSONB,
+                error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
         `);
     }
 

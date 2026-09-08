@@ -120,9 +120,15 @@ export function hasResumableVideoTask(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoTaskId) && !node.metadata?.content;
 }
 
+export function hasResumableImageTask(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Image) return false;
+    const pendingBatchItem = node.metadata?.images?.some((image) => image.taskId && !image.content);
+    return Boolean(pendingBatchItem || (!node.metadata?.content && node.metadata?.imageTaskId));
+}
+
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) =>
-        node.metadata?.status === "loading"
+        node.metadata?.status === "loading" && !hasResumableImageTask(node)
             ? hasResumableVideoTask(node)
                 ? node
                 : {

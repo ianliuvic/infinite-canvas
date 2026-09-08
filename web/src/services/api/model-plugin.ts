@@ -32,6 +32,7 @@ export type RunPluginArgs = {
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
+    onTask?: (taskId: string) => void;
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {
@@ -138,6 +139,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
         "sleep",
         "signal",
         "onDelta",
+        "onTask",
         `"use strict"; return (async () => {\n${args.script}\n})();`,
     ) as (...fnArgs: unknown[]) => Promise<T>;
     try {
@@ -159,6 +161,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             (ms: number) => sleep(ms, args.signal),
             args.signal,
             args.onDelta,
+            args.onTask || (() => undefined),
         );
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
