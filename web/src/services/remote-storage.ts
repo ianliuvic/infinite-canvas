@@ -87,6 +87,8 @@ export async function readRemoteObject(key: string) {
 }
 
 export async function deleteRemoteObjects(keys: Iterable<string>) {
+    // Remote media may still be referenced by another client or a historical version.
+    if (CANVAS_AGENT_MANAGED) return;
     const connection = storageConnection();
     if (!connection) return;
     await Promise.all(

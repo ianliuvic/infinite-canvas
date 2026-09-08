@@ -24,6 +24,7 @@ import { useAgentStore, type AgentAttachment, type AgentBootstrapStatus, type Ag
 import { modelOptionsFromChannels, useConfigStore, type ChannelModel } from "@/stores/use-config-store";
 import { type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool } from "@/lib/agent/agent-site-tools";
+import { flushDurableState } from "@/lib/localforage-storage";
 import { acknowledgeCodexHistory, activateAgentClient, AgentApiError, discoverAgentConfig, establishAgentSession, fetchAgentJson, interruptCodexTurn, postCodexApproval, postState, postToolResult } from "@/services/api/canvas-agent";
 import { CANVAS_AGENT_URL } from "@/constant/runtime-config";
 import { AgentChatTimeline, AgentTaskProgress, AgentUsageBar } from "./agent-chat";
@@ -849,6 +850,9 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     applyOps: context?.applyOps,
                     readAttachment: (attachmentId) => readTurnAttachment(endpoint, token, clientIdRef.current, attachmentId),
                 });
+                await flushDurableState(["infinite-canvas:asset_store", "infinite-canvas:canvas_store"]).catch((error) => {
+                    throw new Error("操作已应用到本机，但云端保存尚未确认。不要重复创建；请先处理保存提示并重试同步。原因：" + String(error));
+                });
                 await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
                 addEventLog(rt("toolCompleted", { tool: toolName(payload.name) }), result, result);
             } catch (error) {
@@ -882,6 +886,9 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (!snapshot) throw new Error(rt("openCanvasFirst"));
                 result = snapshot;
             }
+            await flushDurableState(["infinite-canvas:asset_store", "infinite-canvas:canvas_store"]).catch((error) => {
+                throw new Error("操作已应用到本机，但云端保存尚未确认。不要重复创建；请先处理保存提示并重试同步。原因：" + String(error));
+            });
             await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
             addEventLog(rt("toolCompleted", { tool: toolName(payload.name) }), result, result);
         } catch (error) {

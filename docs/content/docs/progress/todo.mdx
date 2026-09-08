@@ -5,5 +5,7 @@ description: Planned follow-up work
 
 # TODO
 
+- Add a visual resolver for conflicting persistent-state edits (current behavior retains the server version and a downloadable local outbox without destructive overwrite), and server-authoritative media garbage collection that checks live state, pending references, and history before reclaiming objects.
+
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
