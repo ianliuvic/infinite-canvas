@@ -21,6 +21,13 @@ test("image API polls a returned task and does not submit it again", () => {
     assert.match(imageApi, /\[408, 429, 500, 502, 503, 504\]/);
 });
 
+test("server-managed Crun bypasses stale persisted call scripts", () => {
+    assert.match(imageApi, /if \(isManagedCrunImageRequest\(requestConfig\)\)/);
+    assert.match(imageApi, /requestManagedCrunImageTask\(requestConfig/);
+    assert.match(imageApi, /buildApiUrl\(config\.baseUrl, "\/tasks"\)/);
+    assert.match(imageApi, /options\?\.onTask\?\.\(taskId\)/);
+});
+
 test("canvas persists task IDs and resumes unfinished image nodes after restore", () => {
     assert.match(project, /imageTaskId: taskId/);
     assert.match(project, /\{ \.\.\.item, taskId \}/);

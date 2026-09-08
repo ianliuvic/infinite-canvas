@@ -8,7 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
-import { bearerAuthHeaders } from "./server-managed-auth";
+import { bearerAuthHeaders, isServerManagedApiKey } from "./server-managed-auth";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -718,6 +718,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (isManagedCrunImageRequest(requestConfig)) {
+        const quality = normalizeQuality(config.quality);
+        const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
+        const images = await requestManagedCrunImageTask(requestConfig, withSystemPrompt(requestConfig, prompt), [], { size: requestSize, quality, count: n, ...(background ? { background } : {}) }, options);
+        return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -781,6 +788,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (isManagedCrunImageRequest(requestConfig)) {
+        const quality = normalizeQuality(config.quality);
+        const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const images = await requestManagedCrunImageTask(requestConfig, withSystemPrompt(requestConfig, requestPrompt), refs, { size: requestSize, quality, count: n, ...(background ? { background } : {}) }, options);
+        return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -850,6 +865,32 @@ function pluginImageTaskId(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return "";
     const taskId = (value as { task_id?: unknown; taskId?: unknown }).task_id ?? (value as { taskId?: unknown }).taskId;
     return typeof taskId === "string" ? taskId.trim() : "";
+}
+
+function isManagedCrunImageRequest(config: AiConfig) {
+    if (!isServerManagedApiKey(config.apiKey)) return false;
+    try {
+        return /\/agent\/crun(?:\/v1)?\/?$/i.test(new URL(config.baseUrl, window.location.href).pathname);
+    } catch {
+        return false;
+    }
+}
+
+async function requestManagedCrunImageTask(config: AiConfig, prompt: string, images: string[], params: Record<string, unknown>, options?: RequestOptions) {
+    try {
+        const response = await axios.post(
+            buildApiUrl(config.baseUrl, "/tasks"),
+            { model: config.model || config.imageModel, capability: "image", prompt, images, params },
+            { headers: aiHeaders(config, "application/json"), signal: options?.signal },
+        );
+        const taskId = pluginImageTaskId(response.data);
+        if (!taskId) throw new Error("Crun did not return a task ID");
+        options?.onTask?.(taskId);
+        return await waitForPluginImageTask(config, taskId, options);
+    } catch (error) {
+        if (axios.isCancel(error) || error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(readAxiosError(error, apiText("requestFailed")));
+    }
 }
 
 export async function waitForPluginImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
