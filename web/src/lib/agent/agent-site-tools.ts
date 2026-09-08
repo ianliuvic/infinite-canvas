@@ -418,11 +418,11 @@ async function collectEntityMembers(input: SiteToolInput, context: SiteToolConte
     return { members, importedAttachmentCount: seenAttachmentIds.size };
 }
 
-function placeEntity(input: SiteToolInput, context: SiteToolContext) {
+async function placeEntity(input: SiteToolInput, context: SiteToolContext) {
     const entity = findEntity(input);
     if (!entity) throw new Error(siteText("entityNotFound"));
     if (!context.canvasSnapshot || !context.applyOps) throw new Error(siteText("openCanvasFirst"));
-    const placement = buildEntityCanvasPlacement(entity, useAssetStore.getState().assets, context.canvasSnapshot, { assetIds: stringArray(input.assetIds), maxReferences: Number(input.maxReferences) || undefined });
+    const placement = await buildEntityCanvasPlacement(entity, useAssetStore.getState().assets, context.canvasSnapshot, { assetIds: stringArray(input.assetIds), maxReferences: Number(input.maxReferences) || undefined });
     context.applyOps(placement.ops);
     return { ok: true, entity: compactEntity(entity), groupId: placement.groupId, profileNodeId: placement.profileNodeId, referenceNodeIds: placement.referenceNodeIds, hint: siteText("entityPlaceHint") };
 }

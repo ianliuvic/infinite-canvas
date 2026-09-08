@@ -20,6 +20,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildEntityCanvasPlacement } from "@/lib/canvas/entity-canvas";
+import { resolveAssetMediaUrl } from "@/services/asset-media";
 import { arrangeCanvasNodes, viewportForNodes } from "@/lib/canvas/canvas-auto-layout";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
@@ -3049,7 +3050,7 @@ function InfiniteCanvasPage() {
 
     const insertAssistantImage = useCallback(
         async (image: CanvasAssistantImage) => {
-            const storedImage = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(image.dataUrl);
+            const storedImage = image.storageKey ? { url: await resolveAssetMediaUrl("image", image.storageKey, image.dataUrl), storageKey: image.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(image.dataUrl);
             const meta = storedImage.width === 1 && storedImage.height === 1 ? await readImageMeta(storedImage.url) : storedImage;
             const config = fitNodeSize(meta.width, meta.height);
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
@@ -3088,10 +3089,12 @@ function InfiniteCanvasPage() {
     );
 
     const handleAssetInsert = useCallback(
-        (payload: InsertAssetPayload) => {
+        async (payload: InsertAssetPayload) => {
+          try {
             if (payload.kind === "text") {
                 insertAssistantText(payload.content, payload.title);
             } else if (payload.kind === "video") {
+                const mediaUrl = await resolveAssetMediaUrl("video", payload.storageKey, payload.url);
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
                 const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -3105,24 +3108,26 @@ function InfiniteCanvasPage() {
                         position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 },
                         width: nextSize.width,
                         height: nextSize.height,
-                        metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
+                        metadata: { content: mediaUrl, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
             } else {
-                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
+                await insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
             }
             setAssetPickerOpen(false);
+          } catch (error) { message.error(error instanceof Error ? error.message : String(error)); }
         },
-        [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
+        [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width, message],
     );
 
     const handleEntityInsert = useCallback(
-        (entityId: string) => {
+        async (entityId: string) => {
+          try {
             const store = useAssetStore.getState();
             const entity = store.entities.find((item) => item.id === entityId);
             if (!entity) return;
-            const placement = buildEntityCanvasPlacement(entity, store.assets, {
+            const placement = await buildEntityCanvasPlacement(entity, store.assets, {
                 projectId,
                 title: currentProject?.title || "",
                 nodes: nodesRef.current,
@@ -3132,8 +3137,9 @@ function InfiniteCanvasPage() {
                 viewportSize: size,
             });
             applyAgentOps(placement.ops);
+          } catch (error) { message.error(error instanceof Error ? error.message : String(error)); }
         },
-        [applyAgentOps, currentProject?.title, projectId, size],
+        [applyAgentOps, currentProject?.title, projectId, size, message],
     );
 
     // Memoize every callback and render function passed to CanvasNode.
