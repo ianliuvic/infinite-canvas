@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Group deletion: deleting a group from its node toolbar, context menu, bottom toolbar, keyboard shortcut, or Agent operation must remove the group frame, every node assigned to that group, and all connections touching any removed member. Deleting an individual member must continue to leave its group and sibling nodes intact.
+
 - Conflict dismissal: when two tabs change the same field and the save banner reports a conflict, it should offer **Discard local conflict** beside retry and export. After confirmation, only pending records for conflicted state keys are removed, the current cloud snapshot is restored locally, and the page reloads without the warning. Cancel must do nothing; export remains available before discarding; a cloud read failure must retain the local conflict instead of clearing it.
 
 - Crun image task recovery: starting one or several Crun image generations should return a local task ID immediately, store every ID on its image slot and keep the job in PostgreSQL. The server-managed Crun channel must use this route even when local browser configuration still contains the former synchronous `/generate` script. Switching applications, temporarily losing the gateway, or refreshing the canvas must continue polling the same task without another Crun `CreateTask` call or charge. Successful results should be downloaded into persistent canvas storage; an explicit provider failure should show its returned reason and clear only that failed slot's task ID. Stop cancels browser polling without creating or retrying a provider task.
