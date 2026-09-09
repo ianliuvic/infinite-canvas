@@ -5,6 +5,7 @@ import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { Asset, AssetEntity, EntityAssetMember } from "@/stores/use-asset-store";
 import { CanvasNodeType } from "@/types/canvas";
+import { resolveAssetMediaUrl } from "@/services/asset-media";
 
 const CARD_WIDTH = 360;
 const CARD_HEIGHT = 460;
@@ -22,7 +23,7 @@ export type EntityCanvasPlacement = {
 };
 
 /** Build a readable entity board: profile card on the left, reference media on the right, all wrapped in a movable group. */
-export function buildEntityCanvasPlacement(entity: AssetEntity, assets: Asset[], snapshot: CanvasAgentSnapshot, options: { assetIds?: string[]; maxReferences?: number } = {}): EntityCanvasPlacement {
+export async function buildEntityCanvasPlacement(entity: AssetEntity, assets: Asset[], snapshot: CanvasAgentSnapshot, options: { assetIds?: string[]; maxReferences?: number } = {}): Promise<EntityCanvasPlacement> {
     const assetById = new Map(assets.map((asset) => [asset.id, asset]));
     const requested = new Set(options.assetIds || []);
     const members = primaryFirst(entity.members)
@@ -32,6 +33,8 @@ export function buildEntityCanvasPlacement(entity: AssetEntity, assets: Asset[],
             return asset && (asset.kind === "image" || asset.kind === "video") ? [{ member, asset }] : [];
         })
         .slice(0, Math.max(1, Math.min(12, options.maxReferences || 6)));
+    // Resolve only selected references, not the entire asset library. Do not place a partial broken group.
+    const mediaUrls = await Promise.all(members.map(({ asset }) => resolveAssetMediaUrl(asset.kind, asset.data.storageKey, asset.kind === "image" ? asset.data.dataUrl : asset.data.url)));
     const scale = Math.max(0.05, snapshot.viewport.k || 1);
     const viewport = snapshot.viewportSize || { width: 1200, height: 720 };
     const worldWidth = viewport.width / scale;
@@ -77,8 +80,8 @@ export function buildEntityCanvasPlacement(entity: AssetEntity, assets: Asset[],
         const naturalHeight = asset.data.height || MEDIA_HEIGHT;
         const size = fitNodeSize(naturalWidth, naturalHeight, MEDIA_WIDTH, MEDIA_HEIGHT);
         const metadata = asset.kind === "image"
-            ? imageMetadata({ url: asset.data.dataUrl, storageKey: asset.data.storageKey, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType })
-            : videoMetadata({ url: asset.data.url, storageKey: asset.data.storageKey || "", width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType });
+            ? imageMetadata({ url: mediaUrls[index], storageKey: asset.data.storageKey, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType })
+            : videoMetadata({ url: mediaUrls[index], storageKey: asset.data.storageKey || "", width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType });
         ops.push({
             type: "add_node",
             id,

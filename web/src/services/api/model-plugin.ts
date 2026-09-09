@@ -2,6 +2,7 @@ import axios, { type AxiosRequestConfig } from "axios";
 
 import i18n from "@/i18n";
 import { buildApiUrl, withLocalProxy, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { bearerAuthHeaders, withoutServerManagedAuthorization } from "./server-managed-auth";
 
 type RequestOptions = { signal?: AbortSignal };
 
@@ -31,6 +32,7 @@ export type RunPluginArgs = {
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
+    onTask?: (taskId: string) => void;
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {
@@ -47,15 +49,15 @@ function pluginUrl(config: AiConfig, path: string) {
 function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHttp {
     const run = async (method: "get" | "post", path: string, body: unknown, opts?: PluginHttpOptions) => {
         const isForm = typeof FormData !== "undefined" && body instanceof FormData;
-        const response = await axios.request({
+        const response = await axios.request(withoutServerManagedAuthorization(config.apiKey, {
             method,
             url: pluginUrl(config, path),
             data: method === "post" ? body : undefined,
             params: opts?.params,
-            headers: pluginHeaders({ Authorization: `Bearer ${config.apiKey}`, ...opts?.headers }, method === "post" && !isForm && body !== undefined),
+            headers: pluginHeaders({ ...bearerAuthHeaders(config.apiKey), ...opts?.headers }, method === "post" && !isForm && body !== undefined),
             responseType: opts?.responseType || "json",
             signal: options?.signal,
-        });
+        }));
         return response.data;
     };
     return {
@@ -68,7 +70,11 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
 /** Raw request with no automatic auth header — the script controls method, url, headers, body entirely. */
 function createPluginRequest(config: AiConfig, options?: RequestOptions) {
     return async (requestConfig: AxiosRequestConfig & { url: string }) => {
-        const response = await axios.request({ ...requestConfig, url: pluginUrl(config, requestConfig.url), signal: options?.signal });
+        const response = await axios.request(withoutServerManagedAuthorization(config.apiKey, {
+            ...requestConfig,
+            url: pluginUrl(config, requestConfig.url),
+            signal: options?.signal,
+        }));
         return response.data;
     };
 }
@@ -133,6 +139,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
         "sleep",
         "signal",
         "onDelta",
+        "onTask",
         `"use strict"; return (async () => {\n${args.script}\n})();`,
     ) as (...fnArgs: unknown[]) => Promise<T>;
     try {
@@ -154,6 +161,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             (ms: number) => sleep(ms, args.signal),
             args.signal,
             args.onDelta,
+            args.onTask || (() => undefined),
         );
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;

@@ -1,6 +1,7 @@
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
+import { CANVAS_AGENT_MANAGED } from "@/constant/runtime-config";
 import i18n from "@/i18n";
 import { withLocalProxy } from "@/stores/use-config-store";
 import { deleteRemoteObjects, readRemoteObject, writeRemoteObject } from "@/services/remote-storage";
@@ -34,6 +35,7 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
+        if (CANVAS_AGENT_MANAGED) throw error;
         if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
         const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
         if (!meta) throw error;
@@ -56,7 +58,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);
-        await store.removeItem(storageKey).catch(() => undefined);
+        // Keep a recoverable local copy if the remote upload fails.
         throw error;
     }
 }
@@ -203,6 +205,7 @@ export async function deleteStoredImages(keys: Iterable<string>) {
 }
 
 export async function cleanupUnusedImages(usedData: unknown) {
+    if (CANVAS_AGENT_MANAGED) return; // A browser cannot see other tabs, pending writes, or server history.
     const usedKeys = collectImageStorageKeys(usedData);
     await Promise.all([
         imageLogStore.iterate((value) => {

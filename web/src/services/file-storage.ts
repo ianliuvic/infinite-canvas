@@ -1,5 +1,6 @@
 import localforage from "localforage";
 import { nanoid } from "nanoid";
+import { CANVAS_AGENT_MANAGED } from "@/constant/runtime-config";
 
 import { withLocalProxy } from "@/stores/use-config-store";
 import { deleteRemoteObjects, readRemoteObject, writeRemoteObject } from "@/services/remote-storage";
@@ -81,6 +82,7 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 }
 
 export async function cleanupUnusedMedia(usedData: unknown) {
+    if (CANVAS_AGENT_MANAGED) return;
     const usedKeys = collectMediaStorageKeys(usedData);
     const unused: string[] = [];
     await store.iterate((_value, key) => {

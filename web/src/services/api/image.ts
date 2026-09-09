@@ -8,6 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { bearerAuthHeaders, isServerManagedApiKey } from "./server-managed-auth";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -94,7 +95,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; onTask?: (taskId: string) => void };
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -338,7 +339,7 @@ function aiApiUrl(config: AiConfig, path: string) {
 
 function aiHeaders(config: AiConfig, contentType?: string) {
     return {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...bearerAuthHeaders(config.apiKey),
         ...(contentType ? { "Content-Type": contentType } : {}),
     };
 }
@@ -717,6 +718,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (isManagedCrunImageRequest(requestConfig)) {
+        const quality = normalizeQuality(config.quality);
+        const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
+        const images = await requestManagedCrunImageTask(requestConfig, withSystemPrompt(requestConfig, prompt), [], { size: requestSize, quality, count: n, ...(background ? { background } : {}) }, options);
+        return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -730,8 +738,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 images: [],
                 params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onTask: options?.onTask,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            const taskId = pluginImageTaskId(result);
+            const images = taskId ? await waitForPluginImageTask(requestConfig, taskId, options) : normalizePluginImages(result);
+            return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -777,6 +788,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (isManagedCrunImageRequest(requestConfig)) {
+        const quality = normalizeQuality(config.quality);
+        const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const images = await requestManagedCrunImageTask(requestConfig, withSystemPrompt(requestConfig, requestPrompt), refs, { size: requestSize, quality, count: n, ...(background ? { background } : {}) }, options);
+        return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -791,8 +810,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 images: refs,
                 params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
+                onTask: options?.onTask,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            const taskId = pluginImageTaskId(result);
+            const images = taskId ? await waitForPluginImageTask(requestConfig, taskId, options) : normalizePluginImages(result);
+            return images.map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -836,6 +858,64 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
+    }
+}
+
+function pluginImageTaskId(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    const taskId = (value as { task_id?: unknown; taskId?: unknown }).task_id ?? (value as { taskId?: unknown }).taskId;
+    return typeof taskId === "string" ? taskId.trim() : "";
+}
+
+function isManagedCrunImageRequest(config: AiConfig) {
+    if (!isServerManagedApiKey(config.apiKey)) return false;
+    try {
+        return /\/agent\/crun(?:\/v1)?\/?$/i.test(new URL(config.baseUrl, window.location.href).pathname);
+    } catch {
+        return false;
+    }
+}
+
+async function requestManagedCrunImageTask(config: AiConfig, prompt: string, images: string[], params: Record<string, unknown>, options?: RequestOptions) {
+    try {
+        const response = await axios.post(
+            buildApiUrl(config.baseUrl, "/tasks"),
+            { model: config.model || config.imageModel, capability: "image", prompt, images, params },
+            { headers: aiHeaders(config, "application/json"), signal: options?.signal },
+        );
+        const taskId = pluginImageTaskId(response.data);
+        if (!taskId) throw new Error("Crun did not return a task ID");
+        options?.onTask?.(taskId);
+        return await waitForPluginImageTask(config, taskId, options);
+    } catch (error) {
+        if (axios.isCancel(error) || error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(readAxiosError(error, apiText("requestFailed")));
+    }
+}
+
+export async function waitForPluginImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    for (;;) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        try {
+            const response = await axios.get(buildApiUrl(requestConfig.baseUrl, `/tasks/${encodeURIComponent(taskId)}`), {
+                headers: aiHeaders(requestConfig),
+                signal: options?.signal,
+            });
+            const state = response.data as { status?: string; error?: string; media_urls?: string[]; mediaUrls?: string[] };
+            if (state.status === "failed") throw new Error(state.error || "Crun image generation failed");
+            const images = state.media_urls || state.mediaUrls || [];
+            if (state.status === "success" && images.length) return images;
+        } catch (error) {
+            if (axios.isCancel(error) || error instanceof DOMException && error.name === "AbortError") throw error;
+            // A stored task is authoritative: surface provider failures, but tolerate a transient polling request.
+            if (axios.isAxiosError(error) && (!error.response || [408, 429, 500, 502, 503, 504].includes(error.response.status))) {
+                await new Promise((resolve) => setTimeout(resolve, 2500));
+                continue;
+            }
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
     }
 }
 
@@ -888,9 +968,7 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .sort((a, b) => a.localeCompare(b));
         }
         const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
-            headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-            },
+            headers: bearerAuthHeaders(config.apiKey),
         });
         return (response.data.data || [])
             .map((model) => model.id)

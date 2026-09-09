@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type MutableR
 
 import i18n from "@/i18n";
 import { useAgentStore } from "@/stores/use-agent-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransform } from "@/types/canvas";
@@ -61,6 +62,8 @@ export function useAgentBridge(params: AgentBridgeParams) {
             setSelectedConnectionId(null);
             setViewport(next.viewport);
             setContextMenu(null);
+            // Queue durable persistence synchronously, before the tool returns its snapshot.
+            useCanvasStore.getState().updateProject(projectId, { nodes: next.nodes, connections: next.connections, viewport: next.viewport });
             if (generationOps.length) {
                 queueMicrotask(() =>
                     generationOps.forEach((op) => {

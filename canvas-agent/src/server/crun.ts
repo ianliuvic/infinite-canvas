@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { logger } from "../utils/logger.js";
+import type { PersistentStorage } from "./persistent-storage.js";
 
 type CrunCapability = "image" | "video" | "audio";
 type CrunCatalogModel = {
@@ -23,9 +24,19 @@ type CrunGenerateInput = {
     params?: Record<string, unknown>;
 };
 
+type CrunCompletedResult = {
+    ok: true;
+    task_id: string;
+    status: "success";
+    media_urls: string[];
+    media_info: unknown;
+};
+
+type CrunTaskState = CrunCompletedResult | { ok: false; task_id: string; status: "failed"; error: string } | { ok: true; task_id: string; status: "pending" | "running" };
+
 type CrunCanvasJob =
     | { status: "pending" | "running"; crunTaskId?: string }
-    | { status: "success"; result: ReturnType<typeof completedCrunResult> }
+    | { status: "success"; result: CrunCompletedResult }
     | { status: "failed"; error: string };
 
 const CRUN_API_BASE = String(process.env.CRUN_API_BASE_URL || "https://api.crun.ai").replace(/\/+$/, "");
@@ -34,8 +45,9 @@ const MEDIA_READY_DELAYS_MS = [200, 400, 800, 1600, 2500];
 const crunCanvasJobs = new Map<string, CrunCanvasJob>();
 
 const MODEL_SCRIPTS: Record<CrunCapability, string> = {
-    image: `const result = await http.post("/generate", { model, capability: "image", prompt, images, params });
-return result.media_urls || result.mediaUrls || [];`,
+    image: `const task = await http.post("/tasks", { model, capability: "image", prompt, images, params });
+onTask(task.task_id);
+return task;`,
     video: `const toDataUrl = async (file) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
@@ -79,31 +91,46 @@ export async function generateWithCrun(body: CrunGenerateInput) {
     return completedCrunResult(created.task_id, completed);
 }
 
-export function submitCrunCanvasJob(body: CrunGenerateInput) {
+export async function submitCrunCanvasJob(body: CrunGenerateInput, storage: PersistentStorage) {
     const jobId = crypto.randomUUID();
     crunCanvasJobs.set(jobId, { status: "pending" });
-    void runCrunCanvasJob(jobId, body);
+    await storage.putGenerationJob(jobId, "pending");
+    void runCrunCanvasJob(jobId, body, storage);
     return { ok: true, task_id: jobId, status: "pending" as const };
 }
 
-export function readCrunCanvasJob(jobId: string) {
+export async function readCrunCanvasJob(jobId: string, storage: PersistentStorage) {
     const normalizedJobId = jobId.trim();
-    const job = crunCanvasJobs.get(normalizedJobId);
-    if (!job) throw new CrunHttpError(404, "Crun canvas task was not found; submit a new generation");
+    const stored = await storage.getGenerationJob(normalizedJobId);
+    if (!stored) throw new CrunHttpError(404, "Crun canvas task was not found; submit a new generation");
+    let job: CrunCanvasJob;
+    if ((stored.status === "pending" || stored.status === "running") && stored.providerTaskId) {
+        const live = await getCrunTask(stored.providerTaskId);
+        if (live.status === "success") {
+            job = { status: "success", result: { ...live, task_id: normalizedJobId } };
+            await storage.putGenerationJob(normalizedJobId, "success", stored.providerTaskId, job.result);
+        } else if (live.status === "failed") {
+            job = { status: "failed", error: live.error };
+            await storage.putGenerationJob(normalizedJobId, "failed", stored.providerTaskId, null, live.error);
+        } else job = { status: "running", crunTaskId: stored.providerTaskId };
+    } else if (stored.status === "success") job = { status: "success", result: stored.result as CrunCompletedResult };
+    else if (stored.status === "failed") job = { status: "failed", error: stored.error };
+    else job = { status: stored.status === "running" ? "running" : "pending", crunTaskId: stored.providerTaskId || undefined };
+    crunCanvasJobs.set(normalizedJobId, job);
     if (job.status === "success") return job.result;
     if (job.status === "failed") return { ok: false, task_id: normalizedJobId, status: "failed" as const, error: job.error };
     return { ok: true, task_id: normalizedJobId, status: job.status };
 }
 
-async function runCrunCanvasJob(jobId: string, body: CrunGenerateInput) {
+async function runCrunCanvasJob(jobId: string, body: CrunGenerateInput, storage: PersistentStorage) {
     try {
         const created = await createCrunTask(body);
         crunCanvasJobs.set(jobId, { status: "running", crunTaskId: created.task_id });
-        const completed = await crunStage("task execution", () => waitForTask(created.task_id));
-        crunCanvasJobs.set(jobId, { status: "success", result: completedCrunResult(jobId, completed) });
+        await storage.putGenerationJob(jobId, "running", created.task_id);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         crunCanvasJobs.set(jobId, { status: "failed", error: message });
+        await storage.putGenerationJob(jobId, "failed", "", null, message).catch(() => undefined);
         logger.warn("Crun canvas task failed", { jobId, message });
     }
 }
@@ -148,17 +175,17 @@ export async function createCrunTask(body: CrunGenerateInput) {
     return { ok: true, task_id: taskId, status: "pending" as const };
 }
 
-export async function getCrunTask(taskId: string) {
+export async function getCrunTask(taskId: string): Promise<CrunTaskState> {
     const normalizedTaskId = taskId.trim();
     if (!normalizedTaskId) throw new CrunHttpError(400, "Crun task ID is required");
     const task = await crunStage("task status", () => crunRequest("GET", `/api/v1/client/job/TaskInfo?task_id=${encodeURIComponent(normalizedTaskId)}`)) as Record<string, unknown>;
     const status = String(task.status || "").toLowerCase();
     if (status === "success") return completedCrunResult(normalizedTaskId, task);
     if (status === "failed") return { ok: false, task_id: normalizedTaskId, status: "failed" as const, error: crunTaskError(task) };
-    return { ok: true, task_id: normalizedTaskId, status: status || "pending" };
+    return { ok: true, task_id: normalizedTaskId, status: status === "running" ? "running" : "pending" };
 }
 
-function completedCrunResult(taskId: string, completed: Record<string, unknown>) {
+function completedCrunResult(taskId: string, completed: Record<string, unknown>): CrunCompletedResult {
     const result = completed.result && typeof completed.result === "object" ? completed.result as Record<string, unknown> : {};
     const mediaUrls = Array.isArray(result.media_urls) ? result.media_urls.filter((value): value is string => typeof value === "string" && Boolean(value)) : [];
     if (!mediaUrls.length) throw new CrunHttpError(502, String(result.message || completed.message || "Crun completed without a media URL"));

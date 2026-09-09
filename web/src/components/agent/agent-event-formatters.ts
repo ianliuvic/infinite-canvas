@@ -318,6 +318,7 @@ export function isConnectionErrorMessage(item: AgentChatItem) {
 }
 
 export function toolName(name: string) {
+    if (name === "canvas_persist_external_images") return "持久化画布图片";
     if (name === "imagegen" || name.endsWith("__imagegen")) return tr("tools.generateImage");
     if (name === "view_image" || name.endsWith("__view_image")) return tr("tools.viewImage");
     if (name === "exec" || name === "exec_command" || name.endsWith("__exec_command")) return tr("tools.executeCommand");
@@ -515,7 +516,7 @@ export function formatBytes(bytes: number) {
 }
 
 export function isCanvasWriteTool(name: string) {
-    return name === "canvas_apply_ops" || name === "canvas_create_attachment_nodes" || name === "entities_add" || name === "entities_update" || name === "entities_place_on_canvas";
+    return name === "canvas_apply_ops" || name === "canvas_create_attachment_nodes" || name === "canvas_persist_external_images" || name === "entities_add" || name === "entities_update" || name === "entities_place_on_canvas";
 }
 
 function parseToolArguments(value: unknown) {

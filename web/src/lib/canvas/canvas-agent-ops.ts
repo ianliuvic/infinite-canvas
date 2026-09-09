@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { collectNodeDeletionIds } from "@/lib/canvas/canvas-node-geometry";
 import { getNodeSpec, isRegisteredNodeType } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ViewportTransform } from "@/types/canvas";
 
@@ -69,7 +70,7 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
             nodes = nodes.map((node) => (node.id === op.id ? { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } } : node));
         }
         if (op.type === "delete_node") {
-            const ids = new Set(op.ids || (op.id ? [op.id] : op.nodeType ? nodes.filter((node) => node.type === op.nodeType).map((node) => node.id) : []));
+            const ids = collectNodeDeletionIds(new Set(op.ids || (op.id ? [op.id] : op.nodeType ? nodes.filter((node) => node.type === op.nodeType).map((node) => node.id) : [])), nodes);
             nodes = nodes.filter((node) => !ids.has(node.id));
             connections = connections.filter((conn) => !ids.has(conn.fromNodeId) && !ids.has(conn.toNodeId));
             selectedNodeIds = selectedNodeIds.filter((id) => !ids.has(id));

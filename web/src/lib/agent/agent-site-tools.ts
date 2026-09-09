@@ -3,6 +3,7 @@ import type { NavigateFunction } from "react-router-dom";
 import i18n from "@/i18n";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
+import { persistExternalImages } from "./persist-external-images";
 import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
@@ -31,6 +32,7 @@ export const SITE_TOOL_NAMES = [
     "entities_add",
     "entities_update",
     "entities_place_on_canvas",
+    "canvas_persist_external_images",
 ] as const;
 
 export type SiteToolName = (typeof SITE_TOOL_NAMES)[number];
@@ -44,6 +46,7 @@ function siteText(key: string, options?: Record<string, unknown>) {
 }
 
 export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
+    canvas_persist_external_images: "持久化画布图片",
     get canvas_list_projects() { return siteText("canvasList"); },
     get generation_get_status() { return siteText("generationStatus"); },
     get workbench_image_get_config() { return siteText("imageConfig"); },
@@ -65,12 +68,16 @@ type SiteToolContext = {
     canvasSnapshot?: CanvasAgentSnapshot | null;
     applyOps?: (ops: CanvasAgentOp[]) => CanvasAgentSnapshot;
     readAttachment?: (attachmentId: string) => Promise<Blob>;
+    getCanvasSnapshot?: () => CanvasAgentSnapshot | null | undefined;
 };
 type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
 type GenerationStatusItem = { id: string; source: "canvas" | "image" | "video"; status: GenerationStatus; kind?: string; title?: string; prompt?: string; projectId?: string; createdAt?: string; updatedAt?: string; successCount?: number; failCount?: number; error?: string };
 
 export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navigate: NavigateFunction, context: SiteToolContext = {}): Promise<unknown> {
     switch (name) {
+        case "canvas_persist_external_images":
+            if (!context.applyOps || !context.getCanvasSnapshot) throw new Error("请先打开画布");
+            return persistExternalImages(Array.isArray(input.nodes) ? input.nodes as { nodeId: string; url?: string }[] : [], context.getCanvasSnapshot, context.applyOps);
         case "canvas_list_projects":
             return listCanvasProjects(input);
         case "generation_get_status":
@@ -418,11 +425,11 @@ async function collectEntityMembers(input: SiteToolInput, context: SiteToolConte
     return { members, importedAttachmentCount: seenAttachmentIds.size };
 }
 
-function placeEntity(input: SiteToolInput, context: SiteToolContext) {
+async function placeEntity(input: SiteToolInput, context: SiteToolContext) {
     const entity = findEntity(input);
     if (!entity) throw new Error(siteText("entityNotFound"));
     if (!context.canvasSnapshot || !context.applyOps) throw new Error(siteText("openCanvasFirst"));
-    const placement = buildEntityCanvasPlacement(entity, useAssetStore.getState().assets, context.canvasSnapshot, { assetIds: stringArray(input.assetIds), maxReferences: Number(input.maxReferences) || undefined });
+    const placement = await buildEntityCanvasPlacement(entity, useAssetStore.getState().assets, context.canvasSnapshot, { assetIds: stringArray(input.assetIds), maxReferences: Number(input.maxReferences) || undefined });
     context.applyOps(placement.ops);
     return { ok: true, entity: compactEntity(entity), groupId: placement.groupId, profileNodeId: placement.profileNodeId, referenceNodeIds: placement.referenceNodeIds, hint: siteText("entityPlaceHint") };
 }

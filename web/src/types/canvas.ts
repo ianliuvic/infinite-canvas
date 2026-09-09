@@ -35,6 +35,7 @@ export type CanvasNodeImage = {
     naturalHeight: number;
     bytes: number;
     mimeType: string;
+    taskId?: string;
 };
 
 export type CanvasNodeText = {
@@ -45,6 +46,7 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    disabled?: boolean;
     content?: string;
     composerContent?: string;
     prompt?: string;
@@ -84,6 +86,7 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     videoTaskId?: string;
+    imageTaskId?: string;
     videoTaskProvider?: "openai" | "gemini";
     groupId?: string;
     entityId?: string;

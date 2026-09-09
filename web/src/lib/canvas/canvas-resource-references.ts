@@ -23,7 +23,7 @@ export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNo
 }
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[]) {
-    return labelResourceNodes(nodes, true);
+    return labelResourceNodes(nodes.filter((node) => !isNodeEffectivelyDisabled(node, nodes)), true);
 }
 
 export async function resolveCanvasReferenceImages(references: CanvasResourceReference[], nodes: CanvasNodeData[]) {
@@ -56,7 +56,7 @@ export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[],
     const ownInputs = expandGroupResourceNodes(getContextInputNodes(nodeId, nodes, connections), nodes);
     if (ownInputs.length) return ownInputs;
     const node = nodes.find((item) => item.id === nodeId);
-    return node && isResourceNode(node) ? [node] : [];
+    return node && !isNodeEffectivelyDisabled(node, nodes) && isResourceNode(node) ? [node] : [];
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -85,7 +85,7 @@ function hasGroupResources(node: CanvasNodeData, nodes: CanvasNodeData[]) {
 }
 
 export function isCanvasReferenceNode(node: CanvasNodeData, nodes: CanvasNodeData[]) {
-    return isResourceNode(node) || hasGroupResources(node, nodes);
+    return !isNodeEffectivelyDisabled(node, nodes) && (isResourceNode(node) || hasGroupResources(node, nodes));
 }
 
 function expandGroupResourceNodes(inputNodes: CanvasNodeData[], nodes: CanvasNodeData[]) {
@@ -94,7 +94,16 @@ function expandGroupResourceNodes(inputNodes: CanvasNodeData[], nodes: CanvasNod
 }
 
 export function getGroupResourceNodes(groupId: string, nodes: CanvasNodeData[]) {
-    return nodes.filter((node) => node.metadata?.groupId === groupId && isResourceNode(node));
+    const group = nodes.find((node) => node.id === groupId);
+    if (!group || isNodeEffectivelyDisabled(group, nodes)) return [];
+    return nodes.filter((node) => node.metadata?.groupId === groupId && !isNodeEffectivelyDisabled(node, nodes) && isResourceNode(node));
+}
+
+export function isNodeEffectivelyDisabled(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+    if (node.metadata?.disabled) return true;
+    const groupId = node.metadata?.groupId;
+    if (!groupId) return false;
+    return Boolean(nodes.find((item) => item.id === groupId)?.metadata?.disabled);
 }
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
